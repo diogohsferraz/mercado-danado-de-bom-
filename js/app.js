@@ -4,6 +4,7 @@ import { $, esc, logoSVG } from './ui.js';
 import { renderCheckout } from './checkout.js';
 import { renderCliente } from './cliente.js';
 import { renderAdmin } from './admin.js';
+import * as N from './nfce.js';
 
 D.carregar();
 const app = $('#app');
@@ -58,6 +59,11 @@ function rotear() {
 
 window.addEventListener('hashchange', rotear);
 rotear();
+
+// Fila de NFC-e: reenvia as notas que ficaram pendentes (sem internet ou SEFAZ fora do ar).
+setTimeout(() => N.processarFila(), 5e3);
+setInterval(() => N.processarFila(), 60e3);
+window.addEventListener('online', () => N.processarFila());
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('./sw.js').catch(() => {});

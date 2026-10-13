@@ -7,6 +7,7 @@ import * as SP from './sped.js';
 import * as ARQ from './arquivo.js';
 import { chamarPonte } from './ponte.js';
 import { abrirCamera } from './scanner.js';
+import * as N from './nfce.js';
 
 const DIA = 864e5;
 const SECOES = [
@@ -114,6 +115,8 @@ function badgeIdade(c) {
   if (v === 'recusado') return '<span class="badge vermelho">recusado</span>';
   return D.cpfValido(c.cpf) ? '<span class="badge amarelo">pendente</span>' : '<span class="badge">sem CPF</span>';
 }
+const NFCE_BADGE = { autorizada: '<span class="badge verde">NFC-e ✓</span>', pendente: '<span class="badge amarelo">NFC-e na fila</span>', erro: '<span class="badge vermelho">NFC-e com erro</span>', cancelada: '<span class="badge">NFC-e cancelada</span>' };
+const badgeNfce = (v) => (v.nfce ? NFCE_BADGE[v.nfce.status] || '' : '');
 const MODO_TRAVA = { simulada: 'Simulada (teste)', webhook: 'Webhook eWeLink direto', ponte: 'Ponte segura' };
 const cab = (titulo, acoes = '') => `<div class="adm-cab"><h1>${titulo}</h1><div class="acoes">${acoes}</div></div>`;
 const kpi = (rotulo, valor, sub = '', cls = '') => `<div class="kpi ${cls}"><small>${rotulo}</small><b>${valor}</b>${sub ? `<span>${sub}</span>` : ''}</div>`;
@@ -357,12 +360,12 @@ const VIEWS = {
         <section class="cartao"><h3>Top 10 produtos</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>#</th><th>Produto</th><th class="n">Qtd</th><th class="n">Receita</th><th class="n">Lucro bruto</th><th class="n">Margem</th></tr></thead><tbody>${
           top.map((t, i) => `<tr><td>${i + 1}</td><td>${esc(t.nome)}</td><td class="n">${num(t.qtd)}</td><td class="n">${brl(t.receita)}</td><td class="n">${brl(t.lucro)}</td><td class="n">${pct(t.receita ? t.lucro / t.receita : 0)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sem vendas.</td></tr>'
         }</tbody></table></div></section>
-        <section class="cartao"><h3>Vendas recentes</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>Nº</th><th>Data</th><th>Loja</th><th>Canal</th><th>Pagamento</th><th>Cliente</th><th class="n">Total</th><th></th></tr></thead><tbody>${
+        <section class="cartao"><h3>Vendas recentes</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>Nº</th><th>Data</th><th>Loja</th><th>Canal</th><th>Pagamento</th><th>Cliente</th><th>Nota</th><th class="n">Total</th><th></th></tr></thead><tbody>${
           recentes
             .map(
-              (v) => `<tr class="${v.status === 'estornada' ? 'riscado' : ''}"><td>${v.numero}</td><td>${fmtDataHora(v.ts)}</td><td>${esc(D.loja(v.lojaId)?.nome)}</td><td>${v.canal === 'totem' ? 'Totem' : 'Celular'}</td><td>${PAG[v.pagamento]}</td><td>${esc(D.cliente(v.clienteId)?.nome || '—')}</td><td class="n">${brl(v.total)}</td><td class="n"><button class="btn mini ghost" data-venda="${v.id}">Ver</button></td></tr>`,
+              (v) => `<tr class="${v.status === 'estornada' ? 'riscado' : ''}"><td>${v.numero}</td><td>${fmtDataHora(v.ts)}</td><td>${esc(D.loja(v.lojaId)?.nome)}</td><td>${v.canal === 'totem' ? 'Totem' : 'Celular'}</td><td>${PAG[v.pagamento]}</td><td>${esc(D.cliente(v.clienteId)?.nome || '—')}</td><td>${badgeNfce(v)}</td><td class="n">${brl(v.total)}</td><td class="n"><button class="btn mini ghost" data-venda="${v.id}">Ver</button></td></tr>`,
             )
-            .join('') || '<tr><td colspan="8" class="muted">Sem vendas.</td></tr>'
+            .join('') || '<tr><td colspan="9" class="muted">Sem vendas.</td></tr>'
         }</tbody></table></div></section>`;
       $$('[data-venda]', c).forEach((b) => (b.onclick = () => detalheVenda(b.dataset.venda)));
     };
@@ -901,8 +904,24 @@ const VIEWS = {
         return D.isoData(d).slice(0, 7);
       })();
       const pronto = ests.length && f.contador.nome && f.contador.crc;
+      const mesAtual = D.hoje().slice(0, 7);
+      const nfMes = { autorizada: 0, pendente: 0, erro: 0, cancelada: 0 };
+      for (const v of D.db().vendas) if (v.nfce && D.isoData(new Date(v.ts)).startsWith(mesAtual)) nfMes[v.nfce.status] = (nfMes[v.nfce.status] || 0) + 1;
+      const comErro = D.db().vendas.filter((v) => v.status === 'ok' && v.nfce && ['erro', 'pendente'].includes(v.nfce.status)).sort((a, b) => b.ts - a.ts);
       c.innerHTML = `
-        <p class="aviso-adm">🧾 Gera a <b>EFD ICMS/IPI (SPED Fiscal)</b> do mês a partir dos <b>XMLs das notas</b>: as NFC-e de venda (emitidas no seu emissor atual) e as NF-e de compra dos fornecedores. O inventário vem do estoque do app. Regras para <b>Simples Nacional</b>: ICMS recolhido no DAS, sem crédito nas entradas. Entregue o arquivo ao contador para validar no PVA antes de transmitir.</p>
+        <p class="aviso-adm">🧾 Base fiscal: as <b>NFC-e de venda</b> emitidas pelo app (e as importadas do emissor anterior) ficam arquivadas na ponte, e as <b>NF-e de compra</b> ficam em Notas de entrada. A <b>EFD ICMS/IPI (SPED Fiscal)</b> do mês é montada com tudo isso, sem carregar arquivos. Regras para <b>Simples Nacional</b>: ICMS recolhido no DAS, sem crédito nas entradas. O contador valida no PVA antes de transmitir.</p>
+        <section class="cartao nfce-card">
+          <h3>Emissão de NFC-e nas vendas</h3>
+          <div class="kpis">${kpi('Autorizadas (mês)', num(nfMes.autorizada))}${kpi('Na fila', num(nfMes.pendente), 'reenvio automático')}${kpi('Com erro', num(nfMes.erro), nfMes.erro ? 'corrija e reenvie' : '', nfMes.erro ? 'alerta-vermelho' : '')}${kpi('Canceladas (mês)', num(nfMes.cancelada))}</div>
+          <form class="lado" data-f="nfce">
+            <label class="check"><input type="checkbox" name="ativa" ${f.nfce?.ativa ? 'checked' : ''} ${D.cfg().idade.ponteUrl ? '' : 'disabled'}> Emitir NFC-e automaticamente em cada venda</label>
+            <label class="check"><input type="checkbox" name="cpfNaNota" ${f.nfce?.cpfNaNota !== false ? 'checked' : ''}> Incluir o CPF do cliente identificado</label>
+            <button class="btn ghost">Salvar</button>
+            <label class="btn ghost">⬆ Importar XMLs de venda do emissor anterior<input type="file" multiple accept=".xml,.zip,application/xml,text/xml,application/zip" data-a="saidas" hidden></label>
+          </form>
+          ${D.cfg().idade.ponteUrl ? '' : '<p class="small txt-alerta">Para emitir NFC-e, publique a ponte com o provedor de NF-e e o certificado A1 (ponte/README.md) e configure-a em Configurações.</p>'}
+          ${comErro.length ? `<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Venda</th><th>Data</th><th>Problema</th><th></th></tr></thead><tbody>${comErro.slice(0, 20).map((v) => `<tr><td>${v.numero}</td><td>${fmtDataHora(v.ts)}</td><td class="small">${esc(v.nfce.erro || '')}</td><td class="n"><button class="btn mini primary" data-reenviar="${v.id}">Reenviar</button></td></tr>`).join('')}</tbody></table></div>` : ''}
+        </section>
         <div class="passos-fiscal">
           <section class="cartao"><h3>1. Estabelecimentos (CNPJ)</h3>
             ${ests.length ? `<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Razão social</th><th>CNPJ</th><th>IE</th><th>Lojas</th><th></th></tr></thead><tbody>${ests
@@ -939,7 +958,8 @@ const VIEWS = {
             </div>
             <label>Inventário a incluir<select name="inv"><option value="">Nenhum (Bloco H sem movimento)</option>${invs.map((i) => `<option value="${i.id}">${fmtIso(i.data)} · ${esc(ests.find((e) => e.id === i.estabelecimentoId)?.razao || '')}</option>`).join('')}</select></label>
             <div class="lado"><label>Conta contábil do estoque (COD_CTA, opcional)<input name="contaEstoque" value="${esc(f.contaEstoque || '')}" placeholder="ex.: 1.1.4.01"></label></div>
-            <label class="arquivos">XMLs de venda do mês: NFC-e, cancelamentos e inutilizações (.xml ou .zip)<input type="file" name="xmls" multiple accept=".xml,.zip,application/xml,text/xml,application/zip"></label>
+            <label class="arquivos">Opcional: XMLs avulsos que ainda não estão na base (inutilizações, por exemplo)<input type="file" name="xmls" multiple accept=".xml,.zip,application/xml,text/xml,application/zip"></label>
+            <p class="muted small">🧾 As NFC-e de venda vêm do arquivo da ponte (todas as lojas) ${D.cfg().idade.ponteUrl ? '' : '<b class="txt-alerta">(ponte não configurada)</b>'}.</p>
             <p class="muted small">📥 As notas de compra guardadas em <a href="#/admin/entradas">Notas de entrada</a> entram automaticamente (${D.db().notasEntrada.length} guardadas).</p>
             <details><summary>Correspondência CSOSN → CST usada na EFD (revise com o contador)</summary>
               <div class="mapa-csosn">${Object.entries({ ...SP.MAPA_CSOSN_PADRAO, ...(f.mapaCsosn || {}) })
@@ -953,6 +973,29 @@ const VIEWS = {
         </section>`;
 
       $('[data-a=novo-est]', c).onclick = () => formEstabelecimento();
+      $('[data-f=nfce]', c).addEventListener('submit', (e) => {
+        e.preventDefault();
+        D.salvarConfig({ fiscal: { ...D.cfg().fiscal, nfce: { ativa: e.target.ativa.checked, cpfNaNota: e.target.cpfNaNota.checked } } });
+        toast(e.target.ativa.checked ? 'Emissão de NFC-e ligada' : 'Emissão de NFC-e desligada', 'ok');
+      });
+      $('[data-a=saidas]', c).addEventListener('change', async (e) => {
+        const arqs = [...e.target.files];
+        e.target.value = '';
+        try {
+          const r = await N.guardarSaidas(await lerArquivosXml(arqs, { comTexto: true }));
+          toast(`${r.guardadas} XML(s) de venda guardados ${r.local ? 'neste aparelho (sem ponte)' : 'no arquivo da ponte'}${r.ignoradas.length ? ` · ${r.ignoradas.length} ignorado(s)` : ''}`, 'ok', 6000);
+        } catch (err) {
+          toast(err.message, 'erro', 5000);
+        }
+      });
+      $$('[data-reenviar]', c).forEach(
+        (b) =>
+          (b.onclick = async () => {
+            b.disabled = true;
+            const r = await N.reenviar(b.dataset.reenviar);
+            toast(r?.status === 'autorizada' ? `NFC-e ${r.numero} autorizada` : r?.erro || 'Ainda pendente', r?.status === 'autorizada' ? 'ok' : 'erro', 5000);
+          }),
+      );
       $$('[data-est]', c).forEach((b) => (b.onclick = () => formEstabelecimento(ests.find((e) => e.id === b.dataset.est))));
       $('[data-a=contador]', c).onclick = () => formContador();
       $$('[data-prod]', c).forEach((b) => (b.onclick = () => formProduto(D.produto(b.dataset.prod))));
@@ -980,6 +1023,24 @@ const VIEWS = {
           $$('[name^=csosn_]', fm).forEach((i) => /^\d{2}$/.test(i.value) && (mapaCsosn[i.name.slice(6)] = i.value));
           D.salvarConfig({ fiscal: { ...D.cfg().fiscal, perfil: fm.perfil.value, contaEstoque: fm.contaEstoque.value.trim(), mapaCsosn } });
           const docs = fm.xmls.files.length ? await lerArquivosXml([...fm.xmls.files]) : [];
+          btn.textContent = 'Buscando notas de venda na base…';
+          let daPonte = 0;
+          if (D.cfg().idade.ponteUrl && D.cfg().idade.ponteChaveAdmin) {
+            const r = await N.notasDoMes(fm.mes.value.replace('-', ''));
+            r.xmls.forEach((x) => docs.push(SP.lerXml(x)));
+            r.cancelados.forEach((chave) => docs.push({ tipo: 'cancelamento', chave }));
+            daPonte = r.xmls.length;
+          }
+          for (const n of D.db().notasSaida.filter((x) => !x.data || (x.data >= ini && x.data <= fim))) {
+            const xml = await ARQ.lerXmlGuardado(n.chave);
+            if (xml) docs.push(SP.lerXml(xml, n.chave));
+          }
+          // NFC-e autorizadas neste aparelho que ainda não chegaram ao arquivo da ponte
+          for (const v of D.db().vendas.filter((x) => x.nfce?.chave && !x.nfce.arquivada)) {
+            const xml = await ARQ.lerXmlGuardado(v.nfce.chave);
+            if (xml) docs.push(SP.lerXml(xml));
+            if (v.nfce.status === 'cancelada') docs.push({ tipo: 'cancelamento', chave: v.nfce.chave });
+          }
           for (const n of D.db().notasEntrada.filter((x) => x.data >= ini && x.data <= fim)) {
             const xml = await ARQ.lerXmlGuardado(n.chave);
             if (xml) {
@@ -990,7 +1051,7 @@ const VIEWS = {
             }
             if (n.status === 'cancelada') docs.push({ tipo: 'cancelamento', chave: n.chave });
           }
-          if (!docs.length) throw new Error('Carregue os XMLs das NFC-e de venda do mês');
+          if (!docs.length) throw new Error('Nenhuma nota do mês na base. Ligue a emissão de NFC-e ou importe os XMLs de venda.');
           const invSel = D.db().inventarios.find((i) => i.id === fm.inv.value);
           const inventario = invSel && {
             data: invSel.data,
@@ -1132,6 +1193,7 @@ function formProduto(p = null) {
       <p class="muted small" data-margem></p>
       <label class="check"><input type="checkbox" name="ativo" ${p?.ativo === false ? '' : 'checked'}> Produto ativo (aparece no totem)</label>
       <div class="lado"><label>NCM<input name="ncm" value="${esc(p?.ncm || '')}" inputmode="numeric" maxlength="10" placeholder="8 dígitos"></label><label>CEST<input name="cest" value="${esc(p?.cest || '')}" inputmode="numeric" maxlength="9"></label><label class="estreito">Unidade<input name="unid" value="${esc(p?.unid || 'UN')}" maxlength="6"></label><label class="estreito">Origem<input name="origem" value="${esc(p?.origem ?? '0')}" maxlength="1" inputmode="numeric"></label></div>
+      <label class="check"><input type="checkbox" name="st" ${p?.st ? 'checked' : ''}> ICMS por substituição tributária (já recolhido pelo fornecedor): NFC-e com CSOSN 500 e CFOP 5405. Sem a marcação: CSOSN 102 e CFOP 5102.</label>
       <label class="check"><input type="checkbox" name="restrito18" ${p?.restrito18 ? 'checked' : ''}> 🔞 Proibido para menores de 18 anos (bebida alcoólica). A venda exige cliente identificado e com maioridade verificada.</label>
     </form>`,
     actions: [{ label: 'Cancelar' }, { label: 'Salvar', cls: 'primary', onClick: (ctx) => (D.salvarProduto(lerForm(ctx.el.querySelector('form'))), toast('Produto salvo', 'ok')) }],
@@ -1296,22 +1358,55 @@ function detalheVenda(id) {
       ${v.desconto ? `<div class="linha desconto"><span>Desconto (${esc(v.cupom)})</span><span>− ${brl(v.desconto)}</span></div>` : ''}
       <div class="linha total"><span>Total</span><b>${brl(v.total)}</b></div>
       ${v.status === 'estornada' ? `<p class="badge vermelho">Estornada em ${fmtDataHora(v.estorno.ts)} ${esc(v.estorno.motivo)}</p>` : ''}
+      ${v.nfce ? `<div class="linha"><span>NFC-e</span><span>${badgeNfce(v)}${v.nfce.numero ? ` nº ${esc(v.nfce.numero)}/${esc(v.nfce.serie)}` : ''}</span></div>${v.nfce.chave ? `<p class="mono small muted">${esc(v.nfce.chave)}</p>` : ''}${v.nfce.erro ? `<p class="small txt-alerta">${esc(v.nfce.erro)}</p>` : ''}` : ''}
     </div>`,
     actions:
       v.status === 'ok'
         ? [
             { label: 'Fechar' },
+            ...(v.nfce && ['pendente', 'erro'].includes(v.nfce.status)
+              ? [{ label: 'Reenviar NFC-e', cls: 'ghost', onClick: async () => { const r = await N.reenviar(v.id); toast(r?.status === 'autorizada' ? `NFC-e ${r.numero} autorizada` : r?.erro || 'Ainda pendente', r?.status === 'autorizada' ? 'ok' : 'erro', 5000); } }]
+              : []),
             {
               label: 'Estornar venda',
               cls: 'danger',
               onClick: async () => {
-                if (!(await confirmar(`Estornar a venda nº ${v.numero}? Os produtos voltam ao estoque${v.pagamento === 'saldo' ? ' e o valor volta para a carteira do cliente' : '. Estorne também na maquininha'}.`, { ok: 'Estornar', perigo: true }))) return false;
+                if (v.nfce?.status === 'autorizada') {
+                  const just = await pedirJustificativa(v);
+                  if (!just) return false;
+                  await N.cancelar(v.id, just);
+                } else if (!(await confirmar(`Estornar a venda nº ${v.numero}? Os produtos voltam ao estoque${v.pagamento === 'saldo' ? ' e o valor volta para a carteira do cliente' : '. Estorne também na maquininha'}.`, { ok: 'Estornar', perigo: true }))) return false;
                 D.estornarVenda(v.id, 'Estorno pelo painel');
-                toast('Venda estornada', 'ok');
+                toast(v.nfce?.status === 'cancelada' ? 'NFC-e cancelada e venda estornada' : 'Venda estornada', 'ok');
               },
             },
           ]
         : [{ label: 'Fechar' }],
+  });
+}
+
+function pedirJustificativa(v) {
+  return new Promise((ok) => {
+    let r = null;
+    modal({
+      title: `Cancelar NFC-e nº ${v.nfce.numero}`,
+      body: `<form class="form-col"><p>A NFC-e será cancelada na SEFAZ antes do estorno. O cancelamento só é aceito dentro do prazo da SEFAZ-AL; depois dele, fale com o contador.</p>
+        <label>Justificativa (mínimo 15 caracteres)<input name="j" value="Cliente desistiu da compra" minlength="15" maxlength="255" required></label>
+        <p class="muted small">${v.pagamento === 'saldo' ? 'O valor volta para a carteira do cliente.' : 'Estorne também na maquininha.'}</p></form>`,
+      actions: [
+        { label: 'Voltar' },
+        {
+          label: 'Cancelar NFC-e e estornar',
+          cls: 'danger',
+          onClick: (ctx) => {
+            const j = ctx.el.querySelector('[name=j]').value.trim();
+            if (j.length < 15) throw new Error('A justificativa precisa de pelo menos 15 caracteres');
+            r = j;
+          },
+        },
+      ],
+      onClose: () => ok(r),
+    });
   });
 }
 

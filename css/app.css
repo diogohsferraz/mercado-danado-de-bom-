@@ -466,3 +466,11 @@ details.cartao[open] summary { margin-bottom: 0.8rem; }
 .tab-lanc td small { display: block; }
 .data-in { width: 150px; min-height: 34px; padding: 0.3em 0.5em; }
 .lista-avisos { margin: 0; padding-left: 1.1rem; font-size: 0.88rem; max-height: 50vh; overflow: auto; }
+.nfce-box { margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px dashed var(--linha); font-size: 0.88rem; color: var(--muted); }
+.nfce-ok { display: flex; gap: 0.8rem; align-items: center; text-align: left; }
+.nfce-ok > div:last-child { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.nfce-ok b { color: var(--texto); }
+.nfce-ok .mono { word-break: break-all; font-size: 0.75rem; }
+.nfce-qr { flex: none; width: 110px; min-height: 110px; display: grid; place-items: center; }
+.nfce-qr canvas { display: none; }
+.nfce-qr img { width: 110px; height: 110px; }

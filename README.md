@@ -48,6 +48,13 @@ Dados de demonstração: 3 lojas + 1 depósito em Maceió/AL, 39 produtos, 45 di
 - **Reposição:** sugestão por loja baseada no estoque mínimo e na venda média dos últimos 14 dias; transferência em lote a partir do depósito; lista impressa para o repositor; lista de compras para o fornecedor (CSV).
 - **Clientes e carteira:** cadastro, recarga no balcão (dinheiro, Pix, cartão, cortesia), bônus automático na recarga, extrato, ajuste manual e saldo total em carteiras.
 - **Geladeiras:** cadastro por loja, modo da trava (simulada, webhook direto para teste ou ponte), botão de teste e histórico de aberturas.
+- **NFC-e nas vendas:**
+  - cada venda do totem ou do celular emite a NFC-e pela ponte, com QR Code e chave de acesso no comprovante;
+  - **ICMS-ST por produto:** a marcação define CSOSN 500/CFOP 5405 ou CSOSN 102/CFOP 5102, e o desconto do cupom é rateado entre os itens;
+  - se a internet cair, a nota entra numa fila e é reenviada sozinha, sem duplicar;
+  - produto sem NCM é bloqueado antes de chegar à SEFAZ, e o botão "Reenviar" emite depois da correção;
+  - o estorno da venda cancela a nota;
+  - os XMLs ficam arquivados na ponte (a base fiscal compartilhada por todas as lojas), e os do emissor anterior podem ser importados.
 - **Notas de entrada:**
   - importa os XMLs das NF-e de compra (.xml ou .zip), ou baixa a nota **pela chave de acesso**: digitada ou lida do código de barras do DANFE, via ponte;
   - guarda todos os XMLs no aparelho;
@@ -93,6 +100,8 @@ js/geladeira.js       trava da geladeira e verificação de idade
 js/sped.js            geração da EFD ICMS/IPI (SPED Fiscal) a partir dos XMLs
 js/arquivo.js         arquivo de XMLs (IndexedDB) e geração de .zip
 js/ponte.js           chamadas à ponte
+js/nfce.js            emissão, fila, cancelamento e consulta das NFC-e
+js/vendor/            qrcode-generator 1.4.4 (MIT, Kazuhiko Arase)
 ponte/                servidor da ponte (Cloudflare Worker) + instruções
 js/ui.js              componentes de interface
 sw.js                 funcionamento offline

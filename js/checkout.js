@@ -1,7 +1,8 @@
 // Autoatendimento: modo totem (tela na loja) e modo celular (cliente no próprio aparelho).
 import * as D from './db.js';
 import * as Sess from './sessao.js';
-import { $, $$, esc, brl, toast, modal, bip, logoSVG, tecladoHTML, ligarTeclado } from './ui.js';
+import { $, $$, esc, brl, toast, modal, bip, logoSVG, tecladoHTML, ligarTeclado, qrcode } from './ui.js';
+import * as N from './nfce.js';
 import { abrirCamera, escutarLeitor } from './scanner.js';
 import * as G from './geladeira.js';
 
@@ -398,11 +399,13 @@ export function renderCheckout(root, { lojaId, modo }) {
           <div class="linha total"><span>Total</span><b>${brl(v.total)}</b></div>
           <div class="linha"><span>Pagamento</span><span>${NOME_PAG[v.pagamento]}${v.autorizacao ? ` · aut. ${v.autorizacao}` : ''}</span></div>
           ${cli ? `<div class="linha"><span>Saldo restante</span><b>${brl(cli.saldo)}</b></div>` : ''}
+          ${v.nfce ? '<div class="nfce-box" data-nfce><span class="pontos"></span> Emitindo NFC-e…</div>' : ''}
         </div>
         <button class="btn primary grande" data-a="nova">Nova compra${totem ? ' <small data-cont></small>' : ''}</button>
       </section>`;
     $('[data-a=nova]', corpo).onclick = reiniciar;
     renderConta();
+    if (v.nfce) N.emitir(v.id).then((nf) => mostrarNfce(v.id, nf));
     if (totem) {
       let s = 15;
       const el = $('[data-cont]', corpo);
@@ -416,6 +419,17 @@ export function renderCheckout(root, { lojaId, modo }) {
       }, 1000);
       limpar.push(() => clearInterval(iv));
     }
+  }
+
+  function mostrarNfce(vendaId, nf) {
+    const box = $('[data-nfce]', corpo);
+    if (!box || st.venda?.id !== vendaId) return;
+    if (nf?.status === 'autorizada') {
+      const ch = (nf.chave || '').replace(/(\d{4})/g, '$1 ').trim();
+      box.innerHTML = `<div class="nfce-ok"><div class="nfce-qr" data-qr></div><div><b>NFC-e nº ${esc(nf.numero)} · série ${esc(nf.serie)}</b><small>Consulte pelo QR Code ou pela chave de acesso:</small><small class="mono">${esc(ch)}</small>${nf.urlConsulta ? `<small>${esc(nf.urlConsulta)}</small>` : ''}</div></div>`;
+      if (nf.qrcode) qrcode($('[data-qr]', box), nf.qrcode, 110).catch(() => ($('[data-qr]', box).textContent = '📄'));
+    } else if (nf?.status === 'pendente') box.innerHTML = '🕓 Sem conexão com a SEFAZ agora. Sua NFC-e será emitida automaticamente em instantes.';
+    else box.innerHTML = '⚠️ A NFC-e desta compra ficou com pendência e o responsável pela loja foi avisado.';
   }
 
   function telaCodigoCelular() {

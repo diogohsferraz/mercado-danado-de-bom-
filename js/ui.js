@@ -211,11 +211,16 @@ export function carregarScript(src) {
   }));
 }
 
+// QR Code gerado localmente (js/vendor/qrcode-generator.js, MIT): funciona sem internet.
 export async function qrcode(el, texto, tamanho = 220) {
-  await carregarScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
-  el.innerHTML = '';
-  // eslint-disable-next-line no-undef
-  new QRCode(el, { text: texto, width: tamanho, height: tamanho, colorDark: '#111111', colorLight: '#ffffff' });
+  await carregarScript(new URL('./vendor/qrcode-generator.js', import.meta.url).href);
+  const qr = window.qrcode(0, 'M');
+  qr.addData(texto);
+  qr.make();
+  const n = qr.getModuleCount() + 8;
+  el.innerHTML = qr.createImgTag(Math.max(1, Math.floor(tamanho / n)), 4);
+  const img = el.querySelector('img');
+  if (img) Object.assign(img.style, { width: tamanho + 'px', height: tamanho + 'px', imageRendering: 'pixelated' });
 }
 
 // Teclado numérico na tela (totem). Escreve no input com foco dentro de `escopo`.

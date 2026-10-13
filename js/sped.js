@@ -100,6 +100,7 @@ export function lerXml(texto, nome = '') {
     numero: t(ide, 'nNF'),
     data: (t(ide, 'dhEmi') || t(ide, 'dEmi')).slice(0, 10),
     tpNF: t(ide, 'tpNF'),
+    tpAmb: t(ide, 'tpAmb') || t(prot, 'tpAmb'),
     cStat: t(prot, 'cStat'),
     emit: { cnpj: t(emit, 'CNPJ'), cpf: t(emit, 'CPF'), nome: t(emit, 'xNome'), ie: t(emit, 'IE'), end: endereco(q(emit, 'enderEmit')) },
     dest: dest ? { cnpj: t(dest, 'CNPJ'), cpf: t(dest, 'CPF') } : null,
@@ -163,6 +164,10 @@ export function gerarEfd({ est, contador, ini, fim, docs, inventario = null, opc
     if (d.tipo !== 'nfe') continue;
     if (vistos.has(d.chave)) continue;
     vistos.add(d.chave);
+    if (d.tpAmb === '2') {
+      avisos.push(`Nota ${d.modelo}/${d.numero} emitida em homologação (sem valor fiscal): ignorada`);
+      continue;
+    }
     if (!noPeriodo(d.data)) {
       avisos.push(`Nota ${d.modelo}/${d.numero} de ${d.data.split('-').reverse().join('/')} fora do período: ignorada`);
       continue;

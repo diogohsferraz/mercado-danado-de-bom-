@@ -99,6 +99,9 @@ function migrar(s) {
   s.config.fiscal ||= fiscalPadrao();
   s.inventarios ||= [];
   s.notasEntrada ||= [];
+  s.notasSaida ||= [];
+  s.config.fiscal.nfce ||= { ativa: false, cpfNaNota: true };
+  s.produtos.forEach((p) => (p.st ??= false));
   s.depara ||= {};
   s.versao = 2;
 }
@@ -301,6 +304,7 @@ export function finalizarVenda({ lojaId, canal, itens, pagamento, clienteId = nu
     autorizacao,
     clienteId: cli?.id || null,
     status: 'ok',
+    ...(S.config.fiscal?.nfce?.ativa ? { nfce: { status: 'pendente', tentativas: 0 } } : {}),
   };
   for (const l of c.linhas) {
     const r = retirar(l.produtoId, lojaId, l.qtd);
@@ -335,6 +339,20 @@ export function estornarVenda(id, motivo = '') {
   salvar();
 }
 
+export const venda = (id) => S.vendas.find((v) => v.id === id);
+export function atualizarNfce(vendaId, dados) {
+  const v = venda(vendaId);
+  if (!v) return;
+  v.nfce = { ...(v.nfce || {}), ...dados };
+  salvar();
+}
+// XMLs de venda de outro emissor guardados só neste aparelho (quando não há ponte).
+export function registrarSaidaLocal(doc) {
+  const chave = doc.tipo === 'cancelamento' ? `canc-${doc.chave}` : doc.chave;
+  if (S.notasSaida.some((n) => n.chave === chave)) return;
+  S.notasSaida.push({ chave, data: doc.data || '', tipo: doc.tipo });
+  salvar();
+}
 export const vendasNoPeriodo = ({ desde = 0, ate = Infinity, lojaId = '' } = {}) =>
   S.vendas.filter((v) => v.status === 'ok' && v.ts >= desde && v.ts < ate && (!lojaId || v.lojaId === lojaId));
 
@@ -528,6 +546,7 @@ export function salvarProduto(d) {
     minimo: Math.max(0, Math.floor(d.minimo || 0)),
     emoji: d.emoji || '📦',
     restrito18: !!d.restrito18,
+    st: !!d.st,
     ncm: digitos(d.ncm).slice(0, 8),
     cest: digitos(d.cest).slice(0, 7),
     unid: (d.unid || 'UN').toUpperCase().slice(0, 6),
@@ -607,6 +626,7 @@ function fiscalPadrao() {
     perfil: 'A',
     contaEstoque: '',
     mapaCsosn: {},
+    nfce: { ativa: false, cpfNaNota: true },
   };
 }
 export function salvarEstabelecimento(d) {
@@ -784,6 +804,7 @@ function estrutura(config) {
     },
     inventarios: [],
     notasEntrada: [],
+    notasSaida: [],
     depara: {},
     geladeiras: [],
     acessos: [],
@@ -889,7 +910,7 @@ function semente() {
   s.produtos.forEach((p) => delete p._val);
   // NCM de exemplo: o contador deve revisar a classificação de cada produto
   const ncms = ['22011000', '22011000', '22021000', '22021000', '22021000', '20098990', '20098990', '22029900', '22029900', '20052000', '20081100', '19053100', '19042000', '18063220', '10059010', '04012010', '04032000', '04069090', '04051000', '04061090', '11041900', '09012100', '10063021', '07133319', '19021900', '11081400', '15079011', '19059010', '19059090', '19012000', '19059090', '21050010', '19022000', '33061000', '34011190', '48181000', '34022000', '34022000', '28289011', '22030000', '22030000', '22089000', '22042100'];
-  s.produtos.forEach((p, i) => Object.assign(p, { ncm: ncms[i] || '', cest: '', unid: 'UN', origem: '0' }));
+  s.produtos.forEach((p, i) => Object.assign(p, { ncm: ncms[i] || '', cest: '', unid: 'UN', origem: '0', st: /Refrigerante|Energético|Cerveja|Drink|Água mineral|Água com gás|Sorvete/.test(p.nome) }));
 
   // Clientes
   const nomes = ['Ana Beatriz Lima', 'Carlos Eduardo Souza', 'Mariana Tenório', 'José Wellington Silva', 'Fernanda Calheiros', 'Rafael Brandão', 'Luana Vasconcelos', 'Pedro Henrique Melo', 'Juliana Albuquerque', 'Thiago Omena', 'Camila Gusmão', 'Bruno Cavalcante'];

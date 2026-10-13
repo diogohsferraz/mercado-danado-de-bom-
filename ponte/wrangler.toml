@@ -12,3 +12,8 @@ TESTE_MENORES = "52998224725"                     # só no modo teste
 # [[kv_namespaces]]
 # binding = "IDADES"
 # id = "COLE_O_ID_AQUI"
+
+# Base fiscal (XMLs das NFC-e de venda): npx wrangler kv namespace create NOTAS
+# [[kv_namespaces]]
+# binding = "NOTAS"
+# id = "COLE_O_ID_AQUI"

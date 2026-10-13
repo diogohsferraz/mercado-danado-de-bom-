@@ -11,6 +11,10 @@
 //   POST /destravar   { geladeira, cpf }    → { ok }   (403 se menor ou não confirmado)
 //   POST /destravar   { geladeira, teste: true } com X-Chave-Admin → aciona sem cliente
 //   POST /nfe/baixar  { chave } com X-Chave-Admin → { ok, xml }  (NF-e de compra pela chave de acesso)
+//   POST /nfce/emitir { ref, venda }                → emite a NFC-e no provedor e arquiva o XML
+//   POST /nfce/cancelar { ref, chave, justificativa } com X-Chave-Admin
+//   POST /notas/guardar { xml } com X-Chave-Admin   → arquiva XML de saída emitido em outro sistema
+//   POST /notas/mes { mes: 'aaaamm', cursor }  com X-Chave-Admin → XMLs de saída do mês, em páginas
 //
 // Variáveis e segredos: veja ponte/README.md.
 
@@ -52,6 +56,19 @@ export default {
         }
         await acionarWebhook(g);
         return json({ ok: true });
+      }
+      if (rota === '/nfce/emitir') return json({ ok: true, ...(await emitirNfce(corpo, env)) });
+      if (rota === '/nfce/cancelar') {
+        if (!admin) return json({ ok: false, erro: 'O cancelamento exige a chave de administrador' }, 403);
+        return json({ ok: true, ...(await cancelarNfce(corpo, env)) });
+      }
+      if (rota === '/notas/guardar') {
+        if (!admin) return json({ ok: false, erro: 'Exige a chave de administrador' }, 403);
+        return json({ ok: true, ...(await guardarXml(String(corpo.xml || ''), env)) });
+      }
+      if (rota === '/notas/mes') {
+        if (!admin) return json({ ok: false, erro: 'Exige a chave de administrador' }, 403);
+        return json({ ok: true, ...(await notasDoMes(corpo, env)) });
       }
       if (rota === '/nfe/baixar') {
         if (!admin) return json({ ok: false, erro: 'O download de notas exige a chave de administrador' }, 403);
@@ -238,4 +255,131 @@ async function baixarNfe(chave, env) {
   } else throw erro('Download pela chave não configurado na ponte (defina NFE_PROVEDOR)', 501);
   if (!/<(nfeProc|NFe)[\s>]/.test(xml) || !xml.includes(chave)) throw erro('O provedor devolveu só o resumo da nota, não o XML completo. Aguarde a ciência ser processada e tente de novo.', 502);
   return xml;
+}
+
+// ---------- NFC-e de venda: emissão, cancelamento e arquivo ----------
+// O arquivo (KV "NOTAS") é a base fiscal compartilhada: o totem emite, o painel gera o SPED.
+//   s:aaaamm:chave → XML autorizado      c:aaaamm:chave → XML/flag de cancelamento      r:ref → chave (evita emitir duas vezes)
+const mesDaChave = (ch) => '20' + ch.slice(2, 4) + ch.slice(4, 6);
+
+async function arquivar(env, prefixo, chave, valor) {
+  if (env.NOTAS) await env.NOTAS.put(`${prefixo}:${mesDaChave(chave)}:${chave}`, valor);
+}
+
+// Traduz a venda (formato neutro do app) para o provedor. Ajuste aqui se o provedor mudar campos.
+function payloadFocus(venda, env) {
+  const tPag = { credito: '03', debito: '04', saldo: '05', dinheiro: '01', pix: '17' };
+  const p = {
+    natureza_operacao: 'VENDA AO CONSUMIDOR',
+    data_emissao: venda.data,
+    presenca_comprador: '1',
+    modalidade_frete: '9',
+    local_destino: '1',
+    indicador_inscricao_estadual_destinatario: '9',
+    items: venda.itens.map((i, k) => ({
+      numero_item: String(k + 1),
+      codigo_produto: i.codigo,
+      descricao: i.descricao,
+      codigo_ncm: i.ncm,
+      ...(i.cest ? { cest: i.cest } : {}),
+      cfop: i.cfop,
+      unidade_comercial: i.unid,
+      unidade_tributavel: i.unid,
+      quantidade_comercial: i.qtd,
+      quantidade_tributavel: i.qtd,
+      valor_unitario_comercial: i.valorUnit,
+      valor_unitario_tributavel: i.valorUnit,
+      valor_bruto: Math.round(i.qtd * i.valorUnit * 100) / 100,
+      ...(i.desconto ? { valor_desconto: i.desconto } : {}),
+      codigo_barras_comercial: i.ean || 'SEM GTIN',
+      codigo_barras_tributavel: i.ean || 'SEM GTIN',
+      icms_origem: i.origem || '0',
+      icms_situacao_tributaria: i.csosn,
+    })),
+    formas_pagamento: venda.pagamentos.map((x) => ({ forma_pagamento: tPag[x.tipo] || '99', valor_pagamento: x.valor, ...(['credito', 'debito'].includes(x.tipo) ? { tipo_integracao: '2' } : {}) })),
+  };
+  if (env.CNPJ_EMITENTE) p.cnpj_emitente = env.CNPJ_EMITENTE;
+  if (venda.cpf) p.cpf_destinatario = venda.cpf;
+  return p;
+}
+
+async function emitirNfce({ ref, venda }, env) {
+  ref = String(ref || '').replace(/[^\w-]/g, '').slice(0, 50);
+  if (!ref) throw erro('Referência da venda ausente', 400);
+  if (!venda?.itens?.length) throw erro('Venda sem itens', 400);
+  for (const i of venda.itens) if (!/^\d{8}$/.test(i.ncm || '')) throw erro(`Produto "${i.descricao}" sem NCM válido`, 400);
+  // Reenvio da mesma venda: devolve a nota já emitida em vez de emitir outra.
+  if (env.NOTAS) {
+    const ja = await env.NOTAS.get('r:' + ref, 'json');
+    if (ja) return { ...ja, xml: await env.NOTAS.get(`s:${mesDaChave(ja.chave)}:${ja.chave}`), repetida: true };
+  }
+  if ((env.NFE_PROVEDOR || '') !== 'focus') throw erro('Emissão de NFC-e não configurada na ponte (NFE_PROVEDOR=focus)', 501);
+  const base = (env.FOCUS_URL || 'https://api.focusnfe.com.br').replace(/\/+$/, '');
+  const auth = 'Basic ' + btoa(`${env.FOCUS_TOKEN || ''}:`);
+  let r = await fetch(`${base}/v2/nfce?ref=${encodeURIComponent(ref)}`, { method: 'POST', headers: { Authorization: auth, 'Content-Type': 'application/json' }, body: JSON.stringify(payloadFocus(venda, env)) });
+  let j = await r.json().catch(() => ({}));
+  // Se a referência já existe no provedor (reenvio após queda), consulta a nota em vez de falhar.
+  if (r.status === 422 && /j[aá] (foi )?(utilizad|existe|emitid)/i.test(JSON.stringify(j))) {
+    r = await fetch(`${base}/v2/nfce/${encodeURIComponent(ref)}`, { headers: { Authorization: auth } });
+    j = await r.json().catch(() => ({}));
+  }
+  if (j.status !== 'autorizado') {
+    const msg = j.mensagem_sefaz || j.mensagem || (j.erros || []).map((e) => e.mensagem).join('; ') || `provedor respondeu ${r.status}`;
+    throw erro(`NFC-e não autorizada: ${msg}`, r.status === 401 || r.status === 403 ? 502 : 422);
+  }
+  const chave = String(j.chave_nfe || '').replace(/\D/g, '');
+  const rx = await fetch(base + j.caminho_xml_nota_fiscal, { headers: { Authorization: auth } });
+  const xml = rx.ok ? await rx.text() : '';
+  const nota = { chave, numero: String(j.numero || ''), serie: String(j.serie || ''), protocolo: String(j.protocolo || ''), qrcode: j.qrcode_url || '', urlConsulta: j.url_consulta_nf || '' };
+  if (xml) await arquivar(env, 's', chave, xml);
+  if (env.NOTAS) await env.NOTAS.put('r:' + ref, JSON.stringify(nota));
+  return { ...nota, xml, arquivada: !!(xml && env.NOTAS) };
+}
+
+async function cancelarNfce({ ref, chave, justificativa }, env) {
+  chave = String(chave || '').replace(/\D/g, '');
+  justificativa = String(justificativa || '').trim();
+  if (justificativa.length < 15 || justificativa.length > 255) throw erro('A justificativa deve ter de 15 a 255 caracteres', 400);
+  if ((env.NFE_PROVEDOR || '') !== 'focus') throw erro('Cancelamento de NFC-e não configurado na ponte', 501);
+  const base = (env.FOCUS_URL || 'https://api.focusnfe.com.br').replace(/\/+$/, '');
+  const auth = 'Basic ' + btoa(`${env.FOCUS_TOKEN || ''}:`);
+  const r = await fetch(`${base}/v2/nfce/${encodeURIComponent(ref)}`, { method: 'DELETE', headers: { Authorization: auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ justificativa }) });
+  const j = await r.json().catch(() => ({}));
+  if (j.status !== 'cancelado') throw erro(`Cancelamento recusado: ${j.mensagem_sefaz || j.mensagem || r.status}. Fora do prazo, fale com o contador sobre a NF-e de estorno.`, 422);
+  let xml = '1';
+  if (j.caminho_xml_cancelamento) {
+    const rx = await fetch(base + j.caminho_xml_cancelamento, { headers: { Authorization: auth } });
+    if (rx.ok) xml = await rx.text();
+  }
+  if (chave) await arquivar(env, 'c', chave, xml);
+  return { cancelada: true };
+}
+
+// Arquiva XMLs de saída emitidos em outro sistema (histórico do emissor anterior).
+async function guardarXml(xml, env) {
+  if (!env.NOTAS) throw erro('Arquivo de notas não configurado na ponte (KV NOTAS)', 501);
+  const evento = /<tpEvento>110111<\/tpEvento>/.test(xml);
+  const chave = (xml.match(/<chNFe>(\d{44})<\/chNFe>/) || xml.match(/Id="NFe(\d{44})"/) || [])[1];
+  if (!chave || !chaveNfeValida(chave)) throw erro('XML sem chave de acesso válida', 400);
+  if (!evento && !/<mod>65<\/mod>/.test(xml)) throw erro('Só XML de NFC-e (modelo 65) ou cancelamento', 400);
+  await arquivar(env, evento ? 'c' : 's', chave, xml);
+  return { chave, tipo: evento ? 'cancelamento' : 'nfce' };
+}
+
+async function notasDoMes({ mes, cursor }, env) {
+  if (!/^\d{6}$/.test(String(mes || ''))) throw erro('Mês inválido (use aaaamm)', 400);
+  if (!env.NOTAS) return { itens: [], cancelados: [], cursor: null, semArquivo: true };
+  const pag = await env.NOTAS.list({ prefix: `s:${mes}:`, limit: 100, cursor: cursor || undefined });
+  const itens = [];
+  for (const k of pag.keys) itens.push({ chave: k.name.split(':')[2], xml: await env.NOTAS.get(k.name) });
+  let cancelados = [];
+  if (!cursor) {
+    let c = null;
+    do {
+      const pc = await env.NOTAS.list({ prefix: `c:${mes}:`, limit: 1000, cursor: c || undefined });
+      cancelados.push(...pc.keys.map((k) => k.name.split(':')[2]));
+      c = pc.list_complete ? null : pc.cursor;
+    } while (c);
+  }
+  return { itens, cancelados, cursor: pag.list_complete ? null : pag.cursor };
 }

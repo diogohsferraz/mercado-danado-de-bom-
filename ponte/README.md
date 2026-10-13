@@ -78,6 +78,24 @@ O download exige a **chave de administrador** (`X-Chave-Admin`), porque o totem 
 
 Sem a ponte, o app continua aceitando o XML que o fornecedor envia por e-mail (Importar XML/ZIP).
 
+## 6. Emitir NFC-e nas vendas e manter a base fiscal
+
+Com a emissão ligada (**Fiscal e SPED → Emissão de NFC-e**), cada venda do totem ou do celular chama `POST /nfce/emitir`. A ponte emite a nota no provedor e **arquiva o XML no KV `NOTAS`**. É essa base compartilhada que permite ao painel gerar o SPED com as vendas de todas as lojas, sem carregar arquivos.
+
+1. No provedor (Focus NFe):
+   - cadastre a empresa com o **certificado A1** e o **CSC/ID do token da NFC-e**, gerados no portal da SEFAZ-AL;
+   - comece pelo ambiente de **homologação**, com `FOCUS_URL=https://homologacao.focusnfe.com.br`. Notas de homologação não têm valor fiscal, e o SPED as ignora.
+2. Crie o KV: `npx wrangler kv namespace create NOTAS` e ligue em `wrangler.toml` (binding `NOTAS`).
+3. Defina `NFE_PROVEDOR=focus` e o segredo `FOCUS_TOKEN`. Se o token atender a mais de um CNPJ, defina também `CNPJ_EMITENTE`.
+
+O que a ponte garante:
+- **Sem duplicidade:** cada venda é enviada com uma referência única (o id da venda). Um reenvio devolve a nota já emitida em vez de emitir outra.
+- **Sem internet:** a venda é concluída e a NFC-e fica na fila do aparelho, que reenvia sozinha a cada minuto. Isso não é a contingência offline oficial (tpEmis 9). Se a loja ficar muito tempo sem internet, combine com o contador como emitir em contingência.
+- **Cancelamento:** feito ao estornar a venda no painel (`/nfce/cancelar`, com justificativa de 15 caracteres ou mais), dentro do prazo da SEFAZ-AL. O XML do cancelamento também é arquivado.
+- **Histórico:** os XMLs do emissor anterior entram pelo botão "Importar XMLs de venda do emissor anterior" (`/notas/guardar`).
+
+Os nomes dos campos enviados ao provedor estão em uma única função (`payloadFocus` em `worker.js`). Confira-os na documentação atual do Focus NFe antes de ir para produção.
+
 ## Privacidade (LGPD)
 
 - O cliente marca uma autorização no cadastro antes de o CPF ser usado na verificação.
