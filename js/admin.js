@@ -3,6 +3,7 @@ import * as D from './db.js';
 import * as Sess from './sessao.js';
 import * as G from './geladeira.js';
 import { $, $$, esc, brl, num, pct, toast, modal, confirmar, lerForm, baixar, csv, grafBarras, barraHoriz, logoSVG, fmtData, fmtDataHora, fmtIso, qrcode } from './ui.js';
+import * as SP from './sped.js';
 
 const DIA = 864e5;
 const SECOES = [
@@ -16,6 +17,7 @@ const SECOES = [
   ['cupons', '🎟️', 'Cupons'],
   ['geladeiras', '🧊', 'Geladeiras'],
   ['lojas', '🏪', 'Lojas e totens'],
+  ['fiscal', '🧾', 'Fiscal e SPED'],
   ['config', '⚙️', 'Configurações'],
 ];
 const PAG = { credito: 'Crédito', debito: 'Débito', saldo: 'Carteira' };
@@ -788,6 +790,132 @@ const VIEWS = {
     return desenhar;
   },
 
+  // ---------- Fiscal e SPED ----------
+  fiscal(main) {
+    main.innerHTML = cab('Fiscal e SPED') + '<div data-c></div>';
+    const c = $('[data-c]', main);
+    let resultado = null;
+    const desenhar = () => {
+      const f = D.cfg().fiscal;
+      const ests = f.estabelecimentos;
+      const semNcm = D.produtosAtivos().filter((p) => !/^\d{8}$/.test(p.ncm || ''));
+      const invs = D.db().inventarios.slice().sort((a, b) => b.data.localeCompare(a.data));
+      const mesPassado = (() => {
+        const d = new Date();
+        d.setDate(0);
+        return D.isoData(d).slice(0, 7);
+      })();
+      const pronto = ests.length && f.contador.nome && f.contador.crc;
+      c.innerHTML = `
+        <p class="aviso-adm">🧾 Gera a <b>EFD ICMS/IPI (SPED Fiscal)</b> do mês a partir dos <b>XMLs das notas</b>: as NFC-e de venda (emitidas no seu emissor atual) e as NF-e de compra dos fornecedores. O inventário vem do estoque do app. Regras para <b>Simples Nacional</b>: ICMS recolhido no DAS, sem crédito nas entradas. Entregue o arquivo ao contador para validar no PVA antes de transmitir.</p>
+        <div class="passos-fiscal">
+          <section class="cartao"><h3>1. Estabelecimentos (CNPJ)</h3>
+            ${ests.length ? `<div class="tabela-wrap"><table class="tabela"><thead><tr><th>Razão social</th><th>CNPJ</th><th>IE</th><th>Lojas</th><th></th></tr></thead><tbody>${ests
+              .map((e) => `<tr><td><b>${esc(e.razao)}</b></td><td class="mono">${esc(e.cnpj)} ${SP.cnpjValido(e.cnpj) ? '' : '<span class="badge vermelho">inválido</span>'}</td><td class="mono">${esc(e.ie)}</td><td>${e.lojaIds.map((l) => esc(D.loja(l)?.nome || '')).join(', ') || '<span class="badge vermelho">nenhuma</span>'}</td><td class="n"><button class="btn mini ghost" data-est="${e.id}">Editar</button></td></tr>`)
+              .join('')}</tbody></table></div>` : '<p class="muted">Cadastre o CNPJ da empresa. Se cada loja tiver CNPJ próprio (filial), cadastre um por loja: cada CNPJ entrega a sua EFD.</p>'}
+            <button class="btn ghost" data-a="novo-est">+ Estabelecimento</button>
+          </section>
+          <section class="cartao"><h3>2. Contador</h3>
+            <p class="muted small">${f.contador.nome ? `${esc(f.contador.nome)} · CRC ${esc(f.contador.crc)}` : 'Nenhum contador cadastrado (obrigatório no registro 0100).'}</p>
+            <button class="btn ghost" data-a="contador">${f.contador.nome ? 'Editar contador' : '+ Cadastrar contador'}</button>
+          </section>
+          <section class="cartao"><h3>3. Cadastro fiscal dos produtos</h3>
+            ${semNcm.length ? `<p><span class="badge laranja">${semNcm.length} sem NCM</span> ${semNcm.slice(0, 6).map((p) => `<button class="link" data-prod="${p.id}">${esc(p.nome)}</button>`).join(' · ')}${semNcm.length > 6 ? ' …' : ''}</p>` : '<p><span class="badge verde">todos com NCM</span></p>'}
+            <p class="muted small">NCM, CEST, unidade e origem ficam no cadastro de cada produto (Produtos → Editar). Os NCMs de demonstração precisam ser revisados pelo contador.</p>
+          </section>
+          <section class="cartao"><h3>4. Inventário (Bloco H)</h3>
+            <p class="muted small">Registre o inventário no último dia do ano (31/12) e inclua-o na EFD de fevereiro, ou quando o contador pedir. O app fotografa o estoque das lojas do CNPJ naquele momento, a preço de custo.</p>
+            <form class="lado" data-f="inv">
+              <label>Estabelecimento<select name="est">${ests.map((e) => `<option value="${e.id}">${esc(e.razao)}</option>`).join('')}</select></label>
+              <label>Data do inventário<input type="date" name="data" value="${D.hoje()}" required></label>
+              <button class="btn ghost" ${ests.length ? '' : 'disabled'}>📋 Registrar inventário agora</button>
+            </form>
+            ${invs.length ? `<ul class="lista-inv">${invs.slice(0, 6).map((i) => `<li>${fmtIso(i.data)} · ${esc(ests.find((e) => e.id === i.estabelecimentoId)?.razao || '—')} · ${i.itens.length} itens · ${brl(i.itens.reduce((a, x) => a + x.qtd * x.custo, 0))}</li>`).join('')}</ul>` : ''}
+          </section>
+        </div>
+        <section class="cartao">
+          <h3>5. Gerar o arquivo do SPED Fiscal</h3>
+          <form class="form-col" data-f="sped">
+            <div class="lado">
+              <label>Estabelecimento<select name="est" required>${ests.map((e) => `<option value="${e.id}">${esc(e.razao)} · ${esc(e.cnpj)}</option>`).join('')}</select></label>
+              <label>Mês de referência<input type="month" name="mes" value="${mesPassado}" required></label>
+              <label>Perfil<select name="perfil">${['A', 'B', 'C'].map((x) => `<option ${f.perfil === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+              <label>Finalidade<select name="finalidade"><option value="0">Original</option><option value="1">Substituta (retificação)</option></select></label>
+            </div>
+            <label>Inventário a incluir<select name="inv"><option value="">Nenhum (Bloco H sem movimento)</option>${invs.map((i) => `<option value="${i.id}">${fmtIso(i.data)} · ${esc(ests.find((e) => e.id === i.estabelecimentoId)?.razao || '')}</option>`).join('')}</select></label>
+            <div class="lado"><label>Conta contábil do estoque (COD_CTA, opcional)<input name="contaEstoque" value="${esc(f.contaEstoque || '')}" placeholder="ex.: 1.1.4.01"></label></div>
+            <label class="arquivos">XMLs do mês: NFC-e de venda, cancelamentos, inutilizações e NF-e de compra (.xml ou .zip)<input type="file" name="xmls" multiple accept=".xml,.zip,application/xml,text/xml,application/zip" required></label>
+            <details><summary>Correspondência CSOSN → CST usada na EFD (revise com o contador)</summary>
+              <div class="mapa-csosn">${Object.entries({ ...SP.MAPA_CSOSN_PADRAO, ...(f.mapaCsosn || {}) })
+                .map(([k, val]) => `<label>CSOSN ${k}<input name="csosn_${k}" value="${esc(val)}" maxlength="2" inputmode="numeric"></label>`)
+                .join('')}</div>
+            </details>
+            <button class="btn primary grande" ${pronto ? '' : 'disabled'}>Gerar SPED Fiscal</button>
+            ${pronto ? '' : '<p class="small txt-alerta">Cadastre o estabelecimento e o contador antes de gerar.</p>'}
+          </form>
+          <div data-resultado>${resultado || ''}</div>
+        </section>`;
+
+      $('[data-a=novo-est]', c).onclick = () => formEstabelecimento();
+      $$('[data-est]', c).forEach((b) => (b.onclick = () => formEstabelecimento(ests.find((e) => e.id === b.dataset.est))));
+      $('[data-a=contador]', c).onclick = () => formContador();
+      $$('[data-prod]', c).forEach((b) => (b.onclick = () => formProduto(D.produto(b.dataset.prod))));
+      $('[data-f=inv]', c).addEventListener('submit', (e) => {
+        e.preventDefault();
+        try {
+          const inv = D.registrarInventario(e.target.est.value, e.target.data.value);
+          toast(`Inventário registrado: ${inv.itens.length} itens`, 'ok');
+        } catch (err) {
+          toast(err.message, 'erro', 4000);
+        }
+      });
+      $('[data-f=sped]', c).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fm = e.target;
+        const btn = fm.querySelector('.btn.primary');
+        btn.disabled = true;
+        btn.textContent = 'Lendo XMLs…';
+        try {
+          const est = ests.find((x) => x.id === fm.est.value);
+          const [ano, mes] = fm.mes.value.split('-').map(Number);
+          const ini = `${fm.mes.value}-01`;
+          const fim = D.isoData(new Date(ano, mes, 0));
+          const mapaCsosn = {};
+          $$('[name^=csosn_]', fm).forEach((i) => /^\d{2}$/.test(i.value) && (mapaCsosn[i.name.slice(6)] = i.value));
+          D.salvarConfig({ fiscal: { ...D.cfg().fiscal, perfil: fm.perfil.value, contaEstoque: fm.contaEstoque.value.trim(), mapaCsosn } });
+          const docs = await lerArquivosXml([...fm.xmls.files]);
+          const invSel = D.db().inventarios.find((i) => i.id === fm.inv.value);
+          const inventario = invSel && {
+            data: invSel.data,
+            itens: invSel.itens.map((i) => {
+              const p = D.produto(i.produtoId);
+              return { cod: p?.ean || i.produtoId, descr: p?.nome || i.produtoId, ean: p?.ean || '', unid: p?.unid || 'UN', ncm: p?.ncm || '', cest: p?.cest || '', qtd: i.qtd, vlUnit: i.custo };
+            }),
+          };
+          const r = SP.gerarEfd({ est, contador: D.cfg().fiscal.contador, ini, fim, docs, inventario, opcoes: { perfil: fm.perfil.value, finalidade: fm.finalidade.value, mapaCsosn, contaEstoque: fm.contaEstoque.value.trim() } });
+          if (r.erros.length) {
+            resultado = `<div class="sped-res erro"><h4>Não foi possível gerar</h4><ul>${r.erros.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
+          } else {
+            const nomeArq = `SPED_EFD_${SP.cnpjValido(est.cnpj) ? est.cnpj : 'empresa'}_${fm.mes.value.replace('-', '')}.txt`;
+            baixar(nomeArq, new Blob([SP.paraLatin1(r.texto)], { type: 'text/plain;charset=iso-8859-1' }));
+            const x = r.resumo;
+            resultado = `<div class="sped-res ok"><h4>✅ Arquivo gerado: ${esc(nomeArq)}</h4>
+              <div class="kpis">${kpi('NFC-e de venda', num(x.nfce), `${x.nfceCanceladas} canceladas · ${x.nfceInutilizadas} inutilizadas`)}${kpi('Total vendido', brl(x.vendas))}${kpi('NF-e de compra', num(x.entradas), brl(x.compras))}${kpi('Inventário', x.itensInventario ? brl(x.valorInventario) : '—', x.itensInventario ? `${x.itensInventario} itens` : 'não incluído')}</div>
+              <p class="muted small">Leiaute ${r.codVer} · ${r.texto.split('\r\n').length - 1} linhas · ISO-8859-1. Próximo passo: o contador importa no PVA da EFD ICMS/IPI, valida, assina e transmite.</p>
+              ${r.avisos.length ? `<details open><summary>${r.avisos.length} aviso(s)</summary><ul>${r.avisos.slice(0, 80).map((a) => `<li>${esc(a)}</li>`).join('')}</ul></details>` : ''}
+              <p class="muted small">Confira o total vendido com o relatório do seu emissor de NFC-e.</p></div>`;
+          }
+        } catch (err) {
+          resultado = `<div class="sped-res erro"><h4>Erro ao ler os arquivos</h4><p>${esc(err.message)}</p></div>`;
+        }
+        desenhar();
+        $('[data-resultado]', c)?.scrollIntoView({ behavior: 'smooth' });
+      });
+    };
+    desenhar();
+    return desenhar;
+  },
+
   // ---------- Configurações ----------
   config(main) {
     const desenhar = () => {
@@ -896,6 +1024,7 @@ function formProduto(p = null) {
       <div class="lado"><label>Preço de venda (R$)<input name="preco" type="number" min="0" step="0.01" value="${p?.preco ?? ''}" required></label><label>Custo (R$)<input name="custo" type="number" min="0" step="0.01" value="${p?.custo ?? ''}"></label><label>Estoque mínimo por loja<input name="minimo" type="number" min="0" step="1" value="${p?.minimo ?? 3}"></label></div>
       <p class="muted small" data-margem></p>
       <label class="check"><input type="checkbox" name="ativo" ${p?.ativo === false ? '' : 'checked'}> Produto ativo (aparece no totem)</label>
+      <div class="lado"><label>NCM<input name="ncm" value="${esc(p?.ncm || '')}" inputmode="numeric" maxlength="10" placeholder="8 dígitos"></label><label>CEST<input name="cest" value="${esc(p?.cest || '')}" inputmode="numeric" maxlength="9"></label><label class="estreito">Unidade<input name="unid" value="${esc(p?.unid || 'UN')}" maxlength="6"></label><label class="estreito">Origem<input name="origem" value="${esc(p?.origem ?? '0')}" maxlength="1" inputmode="numeric"></label></div>
       <label class="check"><input type="checkbox" name="restrito18" ${p?.restrito18 ? 'checked' : ''}> 🔞 Proibido para menores de 18 anos (bebida alcoólica). A venda exige cliente identificado e com maioridade verificada.</label>
     </form>`,
     actions: [{ label: 'Cancelar' }, { label: 'Salvar', cls: 'primary', onClick: (ctx) => (D.salvarProduto(lerForm(ctx.el.querySelector('form'))), toast('Produto salvo', 'ok')) }],
@@ -1219,6 +1348,79 @@ function formGeladeira(g = null) {
   const mostrar = () => $$('[data-m]', f).forEach((el) => (el.hidden = el.dataset.m !== f.modo.value));
   f.modo.addEventListener('change', mostrar);
   mostrar();
+}
+
+async function lerArquivosXml(arquivos) {
+  const docs = [];
+  for (const a of arquivos) {
+    if (/\.zip$/i.test(a.name)) {
+      for (const ent of await SP.lerZip(a)) if (/\.xml$/i.test(ent.nome)) docs.push(SP.lerXml(ent.texto, ent.nome));
+    } else docs.push(SP.lerXml(await a.text(), a.name));
+  }
+  if (!docs.length) throw new Error('Nenhum XML encontrado nos arquivos enviados');
+  return docs;
+}
+
+function formEstabelecimento(e = null) {
+  const lojas = D.lojasTodas();
+  modal({
+    title: e ? 'Editar estabelecimento' : 'Novo estabelecimento',
+    wide: true,
+    body: `<form class="form-col">
+      <input type="hidden" name="id" value="${e?.id || ''}">
+      <div class="lado"><label class="cresce">Razão social<input name="razao" value="${esc(e?.razao || '')}" required></label><label>Nome fantasia<input name="fantasia" value="${esc(e?.fantasia || D.cfg().nome)}"></label></div>
+      <div class="lado"><label>CNPJ<input name="cnpj" value="${esc(e?.cnpj || '')}" inputmode="numeric" required></label><label>Inscrição estadual<input name="ie" value="${esc(e?.ie || '')}" inputmode="numeric" required></label><label>Inscrição municipal<input name="im" value="${esc(e?.im || '')}"></label></div>
+      <div class="lado"><label class="cresce">Endereço<input name="end" value="${esc(e?.end || '')}"></label><label class="estreito">Número<input name="num" value="${esc(e?.num || '')}"></label><label>Complemento<input name="compl" value="${esc(e?.compl || '')}"></label></div>
+      <div class="lado"><label>Bairro<input name="bairro" value="${esc(e?.bairro || '')}"></label><label>CEP<input name="cep" value="${esc(e?.cep || '')}" inputmode="numeric"></label><label class="estreito">UF<input name="uf" value="${esc(e?.uf || 'AL')}" maxlength="2"></label><label>Município (código IBGE)<input name="codMun" value="${esc(e?.codMun || '2704302')}" inputmode="numeric" maxlength="7"></label></div>
+      <div class="lado"><label>Telefone<input name="fone" value="${esc(e?.fone || '')}"></label><label>E-mail<input name="email" type="email" value="${esc(e?.email || '')}"></label></div>
+      <fieldset class="lojas-est"><legend>Lojas e depósitos deste CNPJ (para o inventário)</legend>${lojas.map((l) => `<label class="check"><input type="checkbox" name="loja_${l.id}" ${e ? (e.lojaIds.includes(l.id) ? 'checked' : '') : 'checked'}> ${esc(l.nome)}</label>`).join('')}</fieldset>
+      <p class="muted small">Código IBGE de Maceió: 2704302. Consulte outros em ibge.gov.br.</p>
+    </form>`,
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Salvar',
+        cls: 'primary',
+        onClick: (ctx) => {
+          const d = lerForm(ctx.el.querySelector('form'));
+          if (!SP.cnpjValido(d.cnpj)) throw new Error('CNPJ inválido');
+          if (!/^\d{7}$/.test(d.codMun)) throw new Error('O código IBGE do município tem 7 dígitos');
+          d.lojaIds = lojas.filter((l) => d[`loja_${l.id}`]).map((l) => l.id);
+          Object.keys(d).filter((k) => k.startsWith('loja_')).forEach((k) => delete d[k]);
+          D.salvarEstabelecimento(d);
+          toast('Estabelecimento salvo', 'ok');
+        },
+      },
+    ],
+  });
+}
+
+function formContador() {
+  const k = D.cfg().fiscal.contador;
+  modal({
+    title: 'Contador responsável',
+    wide: true,
+    body: `<form class="form-col">
+      <div class="lado"><label class="cresce">Nome<input name="nome" value="${esc(k.nome)}" required></label><label>CPF<input name="cpf" value="${esc(k.cpf)}" inputmode="numeric" required></label><label>CRC<input name="crc" value="${esc(k.crc)}" required placeholder="ex.: AL-012345/O-1"></label></div>
+      <div class="lado"><label>CNPJ do escritório<input name="cnpj" value="${esc(k.cnpj)}" inputmode="numeric"></label><label>E-mail<input name="email" type="email" value="${esc(k.email)}"></label><label>Telefone<input name="fone" value="${esc(k.fone)}"></label></div>
+      <div class="lado"><label class="cresce">Endereço<input name="end" value="${esc(k.end)}"></label><label class="estreito">Número<input name="num" value="${esc(k.num)}"></label><label>Bairro<input name="bairro" value="${esc(k.bairro)}"></label></div>
+      <div class="lado"><label>CEP<input name="cep" value="${esc(k.cep)}" inputmode="numeric"></label><label>Município (código IBGE)<input name="codMun" value="${esc(k.codMun || '2704302')}" maxlength="7" inputmode="numeric"></label><label>Complemento<input name="compl" value="${esc(k.compl)}"></label></div>
+    </form>`,
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Salvar',
+        cls: 'primary',
+        onClick: (ctx) => {
+          const d = lerForm(ctx.el.querySelector('form'));
+          if (!D.cpfValido(d.cpf)) throw new Error('CPF do contador inválido');
+          if (d.cnpj && !SP.cnpjValido(d.cnpj)) throw new Error('CNPJ do escritório inválido');
+          D.salvarContador(d);
+          toast('Contador salvo', 'ok');
+        },
+      },
+    ],
+  });
 }
 
 function formCupom(k = null) {

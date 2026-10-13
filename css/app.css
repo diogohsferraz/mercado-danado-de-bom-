@@ -444,3 +444,20 @@ details.cartao[open] summary { margin-bottom: 0.8rem; }
 .verif-ic { font-size: 1.8rem; }
 .verif p { margin: 0.6rem 0; color: var(--muted); }
 .aviso-adm { background: #fff4cc; border: 1px solid #f2d36b; border-radius: 12px; padding: 0.7rem 1rem; }
+
+/* ---------- Fiscal ---------- */
+.passos-fiscal { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.passos-fiscal .cartao { margin: 0; }
+.passos-fiscal + .cartao { margin-top: 16px; }
+.lista-inv { margin: 0.6rem 0 0; padding-left: 1.1rem; font-size: 0.88rem; }
+.mapa-csosn { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-top: 0.6rem; }
+.mapa-csosn label { font-size: 0.8rem; }
+.arquivos input { padding: 0.8rem; border-style: dashed; background: #fbfaf7; }
+.lojas-est { border: 1.5px solid var(--linha); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; }
+.lojas-est legend { font-weight: 600; font-size: 0.9rem; padding: 0 0.3rem; }
+.sped-res { margin-top: 1rem; border-radius: 12px; padding: 1rem; }
+.sped-res.ok { background: #f3fbe3; border: 1.5px solid var(--limao-esc); }
+.sped-res.erro { background: #fde7e5; border: 1.5px solid var(--vermelho); }
+.sped-res h4 { margin: 0 0 0.6rem; font-family: var(--titulo); font-size: 1.15rem; }
+.sped-res ul { margin: 0.4rem 0 0; padding-left: 1.1rem; font-size: 0.88rem; }
+@media (max-width: 900px) { .passos-fiscal { grid-template-columns: 1fr; } }

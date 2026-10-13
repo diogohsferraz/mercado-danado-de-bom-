@@ -48,6 +48,12 @@ Dados de demonstração: 3 lojas + 1 depósito em Maceió/AL, 39 produtos, 45 di
 - **Reposição:** sugestão por loja baseada no estoque mínimo e na venda média dos últimos 14 dias; transferência em lote a partir do depósito; lista impressa para o repositor; lista de compras para o fornecedor (CSV).
 - **Clientes e carteira:** cadastro, recarga no balcão (dinheiro, Pix, cartão, cortesia), bônus automático na recarga, extrato, ajuste manual e saldo total em carteiras.
 - **Geladeiras:** cadastro por loja, modo da trava (simulada, webhook direto para teste ou ponte), botão de teste e histórico de aberturas.
+- **Fiscal e SPED:** gera a **EFD ICMS/IPI (SPED Fiscal, leiaute 020)** do mês para empresas do Simples Nacional. Os dados vêm de três lugares:
+  - os XMLs das NFC-e de venda, cancelamentos e inutilizações, e das NF-e de compra (arquivos .xml ou .zip);
+  - o cadastro fiscal dos produtos: NCM, CEST, unidade e origem;
+  - o inventário registrado no app (Bloco H).
+
+  O cadastro de estabelecimentos (CNPJ/IE) e do contador fica na mesma tela. O arquivo sai em ISO-8859-1, pronto para o contador validar no PVA. Detalhes em [docs/SPED.md](docs/SPED.md).
 - **Cupons:** percentual ou valor fixo, com compra mínima, validade e contagem de usos.
 - **Lojas e totens:** lojas e depósitos, link do totem e cartaz com QR Code para impressão.
 - **Configurações:** nome, mensagem, PIN, regras de bônus e de alerta; backup/importação em JSON.
@@ -77,6 +83,7 @@ js/cliente.js         área do cliente
 js/admin.js           painel administrativo
 js/scanner.js         câmera e leitor de código de barras
 js/geladeira.js       trava da geladeira e verificação de idade
+js/sped.js            geração da EFD ICMS/IPI (SPED Fiscal) a partir dos XMLs
 ponte/                servidor da ponte (Cloudflare Worker) + instruções
 js/ui.js              componentes de interface
 sw.js                 funcionamento offline

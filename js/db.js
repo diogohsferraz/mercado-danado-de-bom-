@@ -89,7 +89,15 @@ function migrar(s) {
     if (c.verificacao.status === 'aprovado' && !['manual', 'ponte'].includes(c.verificacao.fonte))
       c.verificacao = { status: 'pendente', fonte: '', ts: Date.now(), obs: 'Precisa de nova verificação' };
   });
-  s.produtos.forEach((p) => (p.restrito18 ??= false));
+  s.produtos.forEach((p) => {
+    p.restrito18 ??= false;
+    p.ncm ??= '';
+    p.cest ??= '';
+    p.unid ||= 'UN';
+    p.origem ??= '0';
+  });
+  s.config.fiscal ||= fiscalPadrao();
+  s.inventarios ||= [];
   s.versao = 2;
 }
 function gravar() {
@@ -508,6 +516,7 @@ export function salvarProduto(d) {
   if (!(d.preco > 0)) throw new Error('Informe o preço de venda');
   const ean = digitos(d.ean);
   if (ean && S.produtos.some((p) => p.id !== d.id && p.ean === ean)) throw new Error('Já existe produto com este código de barras');
+  if (d.ncm && digitos(d.ncm).length !== 8) throw new Error('O NCM deve ter 8 dígitos');
   const campos = {
     nome: d.nome,
     ean,
@@ -517,6 +526,10 @@ export function salvarProduto(d) {
     minimo: Math.max(0, Math.floor(d.minimo || 0)),
     emoji: d.emoji || '📦',
     restrito18: !!d.restrito18,
+    ncm: digitos(d.ncm).slice(0, 8),
+    cest: digitos(d.cest).slice(0, 7),
+    unid: (d.unid || 'UN').toUpperCase().slice(0, 6),
+    origem: /^[0-8]$/.test(d.origem ?? '') ? d.origem : '0',
     ativo: d.ativo !== false,
   };
   let p = d.id && produto(d.id);
@@ -584,6 +597,45 @@ export function comecarDoZero() {
   salvar();
 }
 
+// ---------- Fiscal ----------
+function fiscalPadrao() {
+  return {
+    estabelecimentos: [],
+    contador: { nome: '', cpf: '', crc: '', cnpj: '', cep: '', end: '', num: '', compl: '', bairro: '', fone: '', email: '', codMun: '' },
+    perfil: 'A',
+    contaEstoque: '',
+    mapaCsosn: {},
+  };
+}
+export function salvarEstabelecimento(d) {
+  const f = S.config.fiscal;
+  if (!d.razao) throw new Error('Informe a razão social');
+  const campos = { ...d, cnpj: digitos(d.cnpj), ie: digitos(d.ie), codMun: digitos(d.codMun), cep: digitos(d.cep), uf: (d.uf || 'AL').toUpperCase(), lojaIds: d.lojaIds || [] };
+  let e = d.id && f.estabelecimentos.find((x) => x.id === d.id);
+  if (e) Object.assign(e, campos);
+  else f.estabelecimentos.push((e = { ...campos, id: uid('e') }));
+  salvar();
+  return e;
+}
+export function salvarContador(d) {
+  S.config.fiscal.contador = { ...S.config.fiscal.contador, ...d };
+  salvar();
+}
+// Fotografia do estoque (Registro de Inventário). Faça no último dia do período, normalmente 31/12.
+export function registrarInventario(estabelecimentoId, data) {
+  const e = S.config.fiscal.estabelecimentos.find((x) => x.id === estabelecimentoId);
+  if (!e) throw new Error('Escolha o estabelecimento');
+  if (!e.lojaIds.length) throw new Error('Vincule as lojas e o depósito deste CNPJ no cadastro do estabelecimento');
+  const itens = produtosAtivos()
+    .map((p) => ({ produtoId: p.id, qtd: e.lojaIds.reduce((a, l) => a + estoque(p.id, l), 0), custo: p.custo }))
+    .filter((i) => i.qtd > 0);
+  const inv = { id: uid('i'), estabelecimentoId, data, ts: Date.now(), itens };
+  S.inventarios = S.inventarios.filter((x) => !(x.estabelecimentoId === estabelecimentoId && x.data === data));
+  S.inventarios.push(inv);
+  salvar();
+  return inv;
+}
+
 // ---------- Dados de demonstração ----------
 function digitoEan(d12) {
   let s = 0;
@@ -603,7 +655,9 @@ function estrutura(config) {
       diasAlertaValidade: 7,
       coberturaDias: 7,
       idade: { modo: 'manual', ponteUrl: '', ponteChave: '', ponteChaveAdmin: '' },
+      fiscal: fiscalPadrao(),
     },
+    inventarios: [],
     geladeiras: [],
     acessos: [],
     lojas: [],
@@ -706,6 +760,9 @@ function semente() {
     }
   }
   s.produtos.forEach((p) => delete p._val);
+  // NCM de exemplo: o contador deve revisar a classificação de cada produto
+  const ncms = ['22011000', '22011000', '22021000', '22021000', '22021000', '20098990', '20098990', '22029900', '22029900', '20052000', '20081100', '19053100', '19042000', '18063220', '10059010', '04012010', '04032000', '04069090', '04051000', '04061090', '11041900', '09012100', '10063021', '07133319', '19021900', '11081400', '15079011', '19059010', '19059090', '19012000', '19059090', '21050010', '19022000', '33061000', '34011190', '48181000', '34022000', '34022000', '28289011', '22030000', '22030000', '22089000', '22042100'];
+  s.produtos.forEach((p, i) => Object.assign(p, { ncm: ncms[i] || '', cest: '', unid: 'UN', origem: '0' }));
 
   // Clientes
   const nomes = ['Ana Beatriz Lima', 'Carlos Eduardo Souza', 'Mariana Tenório', 'José Wellington Silva', 'Fernanda Calheiros', 'Rafael Brandão', 'Luana Vasconcelos', 'Pedro Henrique Melo', 'Juliana Albuquerque', 'Thiago Omena', 'Camila Gusmão', 'Bruno Cavalcante'];
