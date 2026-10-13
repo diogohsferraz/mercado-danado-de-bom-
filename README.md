@@ -29,10 +29,12 @@ Dados de demonstração: 3 lojas + 1 depósito em Maceió/AL, 39 produtos, 45 di
 **Geladeira com trava e venda 18+**
 - Botão **Abrir geladeira** no totem e no celular. O cliente se identifica (CPF/celular + PIN). Se a geladeira for só para maiores, o sistema confere a maioridade antes de destravar a trava magnética, que é acionada pelo eWeLink.
 - Produtos marcados como **18+** (bebida alcoólica) só são vendidos a clientes identificados e com maioridade verificada, em qualquer forma de pagamento. Se a pessoa for barrada, o totem oferece remover esses itens e seguir com o resto da compra.
-- Três formas de verificar a idade:
+- **Regra fixa:** a geladeira só destrava para maior de 18 anos com maioridade confirmada. Menores e cadastros não verificados são sempre barrados, e essa regra não pode ser desligada no painel.
+- Duas formas de confirmar a idade:
   - **manual:** o operador confere o documento com foto e aprova;
-  - **automática:** consulta do CPF pela [ponte](ponte/README.md);
-  - **declarada:** aceita a data digitada pelo cliente; serve só para demonstração.
+  - **automática:** consulta do CPF pela [ponte](ponte/README.md).
+
+  A data digitada pelo próprio cliente nunca vale como prova.
 - Validação dos dígitos do CPF e autorização LGPD no cadastro.
 - Histórico de todas as tentativas de abertura (abertas e negadas, com o motivo).
 - Na produção, a ponte segura (`ponte/`, Cloudflare Worker) guarda as chaves do provedor de CPF e do eWeLink. Ela confere a idade no servidor antes de destravar.

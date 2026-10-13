@@ -555,7 +555,7 @@ export function renderCheckout(root, { lojaId, modo }) {
         <section class="pay pay-centro">
           <button class="link voltar" data-a="voltar">‹ Voltar</button>
           <h1>🧊 Qual geladeira?</h1>
-          <div class="pay-opcoes lista-gel">${gs.map((x) => `<button class="opcao" data-g="${x.id}"><span>🧊</span><b>${esc(x.nome)}</b><small>${x.apenasMaiores ? 'Somente maiores de 18 anos' : 'Livre'}</small></button>`).join('')}</div>
+          <div class="pay-opcoes lista-gel">${gs.map((x) => `<button class="opcao" data-g="${x.id}"><span>🧊</span><b>${esc(x.nome)}</b><small>Somente maiores de 18 anos</small></button>`).join('')}</div>
         </section>`;
       $('[data-a=voltar]', corpo).onclick = telaCompra;
       $$('[data-g]', corpo).forEach((b) => (b.onclick = () => telaGeladeira(D.geladeira(b.dataset.g))));
@@ -563,7 +563,7 @@ export function renderCheckout(root, { lojaId, modo }) {
     }
     const executar = async (cli) => {
       st.etapa = 'abrindo';
-      corpo.innerHTML = `<section class="pay pay-centro"><div class="maquininha">🧊</div><h1>${g.apenasMaiores ? 'Conferindo sua idade…' : 'Destravando…'}</h1><p class="aguarde"><span class="pontos"></span> Aguarde um instante</p></section>`;
+      corpo.innerHTML = `<section class="pay pay-centro"><div class="maquininha">🧊</div><h1>Conferindo sua idade…</h1><p class="aguarde"><span class="pontos"></span> Aguarde um instante</p></section>`;
       const r = await G.abrirGeladeira({ geladeiraId: g.id, clienteId: cli.id, canal: modo });
       if (st.etapa !== 'abrindo') return;
       if (!r.ok && r.falhaTecnica) {
@@ -577,7 +577,7 @@ export function renderCheckout(root, { lojaId, modo }) {
     // No totem, cada abertura pede CPF/celular + PIN (outra pessoa pode estar usando a tela).
     telaIdentificar({
       titulo: `🧊 ${esc(g.nome)}`,
-      texto: g.apenasMaiores ? 'Exclusiva para maiores de 18 anos. Identifique-se para destravar a porta.' : 'Identifique-se para destravar a porta.',
+      texto: 'Exclusiva para maiores de 18 anos. Identifique-se para destravar a porta.',
       aoOk: executar,
     });
   }

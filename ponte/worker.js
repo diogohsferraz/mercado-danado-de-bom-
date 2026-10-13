@@ -44,7 +44,8 @@ export default {
         if (!g) return json({ ok: false, erro: 'Geladeira não cadastrada na ponte' }, 404);
         if (corpo.teste) {
           if (!admin) return json({ ok: false, erro: 'O teste exige a chave de administrador' }, 403);
-        } else if (g.exigeMaior !== false) {
+        } else {
+          // Regra fixa: sem maioridade confirmada, o relé não é acionado.
           const r = await maioridade(limparCpf(corpo.cpf), env);
           if (!r.maior) return json({ ok: false, erro: 'Maioridade não confirmada para este CPF' }, 403);
         }

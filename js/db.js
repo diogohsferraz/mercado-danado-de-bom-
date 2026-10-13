@@ -80,9 +80,14 @@ function migrar(s) {
   s.geladeiras ||= [];
   s.acessos ||= [];
   s.config.idade ||= { modo: 'manual', ponteUrl: '', ponteChave: '', ponteChaveAdmin: '' };
+  // A data digitada pelo próprio cliente não vale como prova de maioridade.
+  if (!['manual', 'ponte'].includes(s.config.idade.modo)) s.config.idade.modo = 'manual';
+  s.geladeiras.forEach((g) => (g.apenasMaiores = true));
   s.clientes.forEach((c) => {
     c.nascimento ??= '';
     c.verificacao ||= { status: 'pendente', fonte: '', ts: 0, obs: '' };
+    if (c.verificacao.status === 'aprovado' && !['manual', 'ponte'].includes(c.verificacao.fonte))
+      c.verificacao = { status: 'pendente', fonte: '', ts: Date.now(), obs: 'Precisa de nova verificação' };
   });
   s.produtos.forEach((p) => (p.restrito18 ??= false));
   s.versao = 2;
@@ -378,9 +383,6 @@ export function salvarCliente(dados) {
     c = { id: uid('c'), ...campos, saldo: 0, criado: Date.now(), ativo: true, consentimento: dados.consentimento ? Date.now() : 0, verificacao: { status: 'pendente', fonte: '', ts: 0, obs: '' } };
     S.clientes.push(c);
   }
-  // Modo de demonstração: aceita a data informada pelo próprio cliente.
-  if (S.config.idade.modo === 'declarada' && c.verificacao.status === 'pendente' && cpf && idade(nasc) >= 18)
-    c.verificacao = { status: 'aprovado', fonte: 'declarada', ts: Date.now(), obs: 'Data informada pelo cliente' };
   salvar();
   return c;
 }
@@ -389,11 +391,12 @@ export function salvarCliente(dados) {
 export function situacaoIdade(cli) {
   if (!cli) return { ok: false, motivo: 'Identifique-se com CPF ou celular e PIN.' };
   const v = cli.verificacao?.status;
-  if (v === 'aprovado') return { ok: true, idade: idade(cli.nascimento) };
+  if (v === 'aprovado' && ['manual', 'ponte'].includes(cli.verificacao.fonte)) return { ok: true, idade: idade(cli.nascimento) };
   if (v === 'recusado') return { ok: false, motivo: 'Não foi possível confirmar que você tem 18 anos ou mais.', recusado: true };
   return { ok: false, motivo: 'Sua idade ainda não foi verificada.', pendente: true };
 }
 export function definirVerificacao(clienteId, status, { fonte = 'manual', nascimento = null, obs = '' } = {}) {
+  if (!['manual', 'ponte'].includes(fonte)) throw new Error('Fonte de verificação inválida');
   const c = cliente(clienteId);
   if (!c) throw new Error('Cliente não encontrado');
   if (nascimento) c.nascimento = nascimento;
@@ -411,7 +414,7 @@ export function salvarGeladeira(d) {
   const campos = {
     nome: d.nome,
     lojaId: d.lojaId,
-    apenasMaiores: d.apenasMaiores !== false,
+    apenasMaiores: true, // regra fixa: a geladeira só abre para maiores de 18
     ativa: d.ativa !== false,
     trava: { modo, webhookUrl: d.webhookUrl || '', ponteId: d.ponteId || '', segundos: Math.min(60, Math.max(3, Math.floor(d.segundos || 8))) },
   };

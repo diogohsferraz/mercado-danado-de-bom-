@@ -142,7 +142,7 @@ export function renderCliente(root) {
   function blocoIdade(c) {
     const st = c.verificacao?.status || 'pendente';
     const modo = D.cfg().idade.modo;
-    const temGeladeira = D.db().geladeiras.some((g) => g.ativa && g.apenasMaiores);
+    const temGeladeira = D.db().geladeiras.some((g) => g.ativa);
     if (!temGeladeira && !D.db().produtos.some((p) => p.restrito18 && p.ativo)) return '';
     const falta = !D.cpfValido(c.cpf) ? 'Informe seu CPF em “Meus dados”.' : !c.nascimento ? 'Informe sua data de nascimento em “Meus dados”.' : '';
     const texto =

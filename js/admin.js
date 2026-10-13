@@ -100,7 +100,7 @@ function telaLogin(root, secao) {
 // ---------- Utilidades ----------
 const pendentesIdade = () => D.db().clientes.filter((c) => c.verificacao?.status === 'pendente' && D.cpfValido(c.cpf)).length;
 const contador = (id, al) => (id === 'reposicao' ? al.baixo.length : id === 'validade' ? al.vencidos.length + al.vencendo.length : id === 'clientes' ? pendentesIdade() : 0);
-const FONTE = { manual: 'documento conferido', ponte: 'consulta automática', declarada: 'data informada pelo cliente' };
+const FONTE = { manual: 'documento conferido', ponte: 'consulta automática' };
 function badgeIdade(c) {
   const v = c.verificacao?.status;
   const a = D.idade(c.nascimento);
@@ -707,15 +707,15 @@ const VIEWS = {
           ${kpi('Aberturas hoje', num(hoje.filter((a) => a.ok).length), `${hoje.filter((a) => !a.ok).length} negadas hoje`, 'destaque')}
           ${kpi('Negadas (30 d)', num(negadas30.length), `${negadas30.filter((a) => /menor/i.test(a.motivo)).length} por menoridade`)}
           ${kpi('Clientes 18+ verificados', num(D.db().clientes.filter((x) => x.verificacao?.status === 'aprovado').length))}
-          ${kpi('Verificação de idade', modo === 'ponte' ? 'Automática' : modo === 'manual' ? 'Manual' : 'Declarada', modo === 'ponte' ? 'consulta do CPF pela ponte' : modo === 'manual' ? 'documento conferido pelo operador' : '⚠️ só para demonstração', modo === 'declarada' ? 'alerta-vermelho' : '')}
+          ${kpi('Verificação de idade', modo === 'ponte' ? 'Automática' : 'Manual', modo === 'ponte' ? 'consulta do CPF pela ponte' : 'documento conferido pelo operador')}
         </div>
-        ${modo === 'declarada' ? '<p class="aviso-adm">⚠️ No modo “declarada” o sistema aceita a data de nascimento digitada pelo próprio cliente. Não use em produção: troque para Manual ou Ponte em Configurações.</p>' : ''}
+        <p class="aviso-adm">🔞 Regra fixa: as geladeiras só destravam para clientes com maioridade confirmada (documento conferido pelo operador ou consulta do CPF). Menores e cadastros não verificados são sempre barrados.</p>
         <div class="grade-lojas">${
           gs
             .map(
               (g) => `<div class="cartao loja-card ${g.ativa ? '' : 'inativo'}">
             <div class="lc-topo"><span class="lc-ic">🧊</span><div><b>${esc(g.nome)}</b><small>${esc(D.loja(g.lojaId)?.nome || '—')}</small></div></div>
-            <p class="muted small">${g.apenasMaiores ? '🔞 Somente maiores de 18' : 'Livre para todos'} · Trava: <b>${MODO_TRAVA[g.trava.modo]}</b> · abre por ${g.trava.segundos} s${g.ativa ? '' : ' · <b>inativa</b>'}</p>
+            <p class="muted small">🔞 Somente maiores de 18 · Trava: <b>${MODO_TRAVA[g.trava.modo]}</b> · abre por ${g.trava.segundos} s${g.ativa ? '' : ' · <b>inativa</b>'}</p>
             ${g.trava.modo === 'webhook' ? '<p class="small txt-alerta">Modo de teste: a URL do webhook fica visível no navegador.</p>' : ''}
             <div class="lc-acoes"><button class="btn mini primary" data-teste="${g.id}">🔓 Testar destravar</button><button class="btn mini ghost" data-ed="${g.id}">Editar</button></div>
           </div>`,
@@ -814,7 +814,6 @@ const VIEWS = {
               <label>Como confirmar a maioridade<select name="modo">
                 <option value="manual" ${k.idade.modo === 'manual' ? 'selected' : ''}>Manual: o operador confere o documento e aprova</option>
                 <option value="ponte" ${k.idade.modo === 'ponte' ? 'selected' : ''}>Automática: consulta do CPF pela ponte (recomendado)</option>
-                <option value="declarada" ${k.idade.modo === 'declarada' ? 'selected' : ''}>Declarada: aceita a data digitada (só demonstração)</option>
               </select></label>
               <label>Endereço da ponte<input name="ponteUrl" value="${esc(k.idade.ponteUrl)}" placeholder="https://ponte-mercado.seu-usuario.workers.dev"></label>
               <div class="lado"><label>Chave do app<input name="ponteChave" value="${esc(k.idade.ponteChave)}" autocomplete="off"></label><label>Chave de administrador<input name="ponteChaveAdmin" type="password" value="${esc(k.idade.ponteChaveAdmin)}" autocomplete="off"></label></div>
@@ -1205,7 +1204,7 @@ function formGeladeira(g = null) {
       <input type="hidden" name="id" value="${g?.id || ''}">
       <label>Nome<input name="nome" value="${esc(g?.nome || 'Geladeira de bebidas')}" required></label>
       <label>Loja${selLoja('lojaId', g?.lojaId || D.lojasVenda()[0]?.id, { deposito: false })}</label>
-      <label class="check"><input type="checkbox" name="apenasMaiores" ${g?.apenasMaiores === false ? '' : 'checked'}> 🔞 Somente maiores de 18 anos</label>
+      <p class="aviso-adm small">🔞 Abre somente para maiores de 18 anos com maioridade confirmada. Esta regra não pode ser desligada.</p>
       <label>Como acionar a trava<select name="modo">${Object.entries(MODO_TRAVA).map(([v, n]) => `<option value="${v}" ${t.modo === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
       <label data-m="webhook">URL do webhook da Cena eWeLink<input name="webhookUrl" value="${esc(t.webhookUrl)}" placeholder="https://…"></label>
       <p class="small txt-alerta" data-m="webhook">Só para testes: a URL fica visível no navegador e quem tiver acesso a ela abre a geladeira.</p>

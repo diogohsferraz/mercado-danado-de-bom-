@@ -61,6 +61,7 @@ export async function acionarTrava(g, { cliente = null, teste = false } = {}) {
   }
   // Modo ponte: quem decide se abre é a ponte, conferindo a idade de novo.
   await chamarPonte('/destravar', { geladeira: t.ponteId || g.id, cpf: cliente ? digitos(cliente.cpf) : null, teste }, { admin: teste });
+  // (a ponte confere a maioridade do CPF de novo, no servidor, antes de acionar o relé)
 }
 
 // Fluxo completo: confere a idade, destrava e registra a tentativa.
@@ -68,12 +69,11 @@ export async function abrirGeladeira({ geladeiraId, clienteId, canal }) {
   const g = D.geladeira(geladeiraId);
   const cli = D.cliente(clienteId);
   const base = { geladeiraId, lojaId: g.lojaId, clienteId, canal };
-  if (g.apenasMaiores) {
-    const s = D.situacaoIdade(cli);
-    if (!s.ok) {
-      D.registrarAcesso({ ...base, ok: false, motivo: s.recusado ? 'Menor de 18 anos' : 'Idade não verificada' });
-      return { ok: false, ...s };
-    }
+  // Regra fixa: só abre para cliente com maioridade confirmada (documento conferido ou consulta do CPF).
+  const s = D.situacaoIdade(cli);
+  if (!s.ok) {
+    D.registrarAcesso({ ...base, ok: false, motivo: s.recusado ? 'Menor de 18 anos' : 'Idade não verificada' });
+    return { ok: false, ...s };
   }
   try {
     await acionarTrava(g, { cliente: cli });
