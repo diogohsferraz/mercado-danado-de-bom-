@@ -2,6 +2,7 @@
 import * as D from './db.js';
 import * as Sess from './sessao.js';
 import { $, $$, esc, brl, toast, modal, logoSVG, fmtDataHora, fmtIso, lerForm } from './ui.js';
+import * as G from './geladeira.js';
 
 const ICONE = { recarga: '⬆️', bonus: '🎁', compra: '🛒', estorno: '↩️', ajuste: '✏️' };
 
@@ -27,12 +28,14 @@ export function renderCliente(root) {
                 <label>CPF ou celular<input name="ident" inputmode="numeric" required autocomplete="username"></label>
                 <label>PIN (4 números)<input name="pin" type="password" inputmode="numeric" maxlength="4" required autocomplete="current-password"></label>
                 <button class="btn primary grande bloco">Entrar</button>
-                <p class="muted small">Demonstração: CPF <b>111.222.333-44</b>, PIN <b>1234</b></p>
+                <p class="muted small">Demonstração: CPF <b>111.222.333-96</b>, PIN <b>1234</b></p>
               </form>`
             : `<form class="form-col" data-f="criar">
                 <label>Nome completo<input name="nome" required autocomplete="name"></label>
                 <label>Celular com DDD<input name="telefone" inputmode="tel" required placeholder="(82) 99999-0000" autocomplete="tel"></label>
-                <label>CPF <small>(opcional)</small><input name="cpf" inputmode="numeric" maxlength="14"></label>
+                <label>CPF <small>(necessário para a geladeira de bebidas)</small><input name="cpf" inputmode="numeric" maxlength="14"></label>
+                <label>Data de nascimento<input name="nascimento" type="date" required></label>
+                <label class="check consent"><input type="checkbox" name="consentimento"> Autorizo o uso do meu CPF para confirmar que sou maior de 18 anos (LGPD, art. 7º). O dado é usado só para liberar produtos 18+.</label>
                 <label>Crie um PIN de 4 números<input name="pin" type="password" inputmode="numeric" maxlength="4" pattern="\\d{4}" required></label>
                 <button class="btn primary grande bloco">Criar minha carteira</button>
                 <p class="muted small">Com a carteira você paga as compras direto pelo celular ou no totem e ganha bônus nas recargas.</p>
@@ -60,6 +63,7 @@ export function renderCliente(root) {
         Sess.entrarCliente(c.id);
         toast('Conta criada! Faça sua primeira recarga.', 'ok');
         desenhar();
+        if (D.cfg().idade.modo === 'ponte' && c.cpf) verificar(c.id);
       } catch (err) {
         toast(err.message, 'erro', 3500);
       }
@@ -82,6 +86,7 @@ export function renderCliente(root) {
         </div>
         ${bp > 0 ? `<p class="bonus-tag">🎁 Ganhe ${bp}% de bônus em recargas a partir de ${brl(bm)}</p>` : ''}
       </div>
+      ${blocoIdade(c)}
       ${
         cupons.length
           ? `<h3 class="sec">Cupons disponíveis</h3><div class="cupons">${cupons
@@ -105,6 +110,9 @@ export function renderCliente(root) {
           <label>Nome<input name="nome" value="${esc(c.nome)}" required></label>
           <label>Celular<input name="telefone" value="${esc(c.telefone)}" required></label>
           <label>CPF<input name="cpf" value="${esc(c.cpf)}"></label>
+          <label>Data de nascimento<input name="nascimento" type="date" value="${esc(c.nascimento || '')}"></label>
+          ${c.consentimento ? '' : '<label class="check consent"><input type="checkbox" name="consentimento"> Autorizo o uso do meu CPF para verificar a maioridade (LGPD).</label>'}
+          <p class="muted small">Alterar CPF ou data de nascimento exige nova verificação de idade.</p>
           <label>PIN<input name="pin" type="password" inputmode="numeric" maxlength="4" value="${esc(c.pin)}" required></label>
           <button class="btn primary">Salvar</button>
         </form>
@@ -118,6 +126,7 @@ export function renderCliente(root) {
       desenhar();
     };
     $('[data-a=recarregar]', root).onclick = () => abrirRecarga(c);
+    $('[data-a=verificar]', root)?.addEventListener('click', () => verificar(c.id));
     $('[data-a=comprar]', root).onclick = () => escolherLoja();
     $('[data-f=dados]', root).addEventListener('submit', (e) => {
       e.preventDefault();
@@ -128,6 +137,35 @@ export function renderCliente(root) {
         toast(err.message, 'erro');
       }
     });
+  }
+
+  function blocoIdade(c) {
+    const st = c.verificacao?.status || 'pendente';
+    const modo = D.cfg().idade.modo;
+    const temGeladeira = D.db().geladeiras.some((g) => g.ativa && g.apenasMaiores);
+    if (!temGeladeira && !D.db().produtos.some((p) => p.restrito18 && p.ativo)) return '';
+    const falta = !D.cpfValido(c.cpf) ? 'Informe seu CPF em “Meus dados”.' : !c.nascimento ? 'Informe sua data de nascimento em “Meus dados”.' : '';
+    const texto =
+      st === 'aprovado'
+        ? 'Maioridade confirmada. Você já pode abrir a geladeira de bebidas e comprar produtos 18+.'
+        : st === 'recusado'
+          ? 'Não conseguimos confirmar que você tem 18 anos ou mais. Se houve erro, fale com o responsável pela loja.'
+          : falta || (modo === 'ponte' ? 'Toque em verificar: consultamos seu CPF na hora.' : 'Mostre um documento com foto ao responsável pela loja para liberar a geladeira de bebidas.');
+    return `<div class="cartao verif verif-${st}">
+      <div class="verif-topo"><span class="verif-ic">${st === 'aprovado' ? '✅' : st === 'recusado' ? '⛔' : '🔞'}</span><div><b>Verificação de idade</b><small>${st === 'aprovado' ? 'Aprovada' : st === 'recusado' ? 'Recusada' : 'Pendente'}</small></div></div>
+      <p>${texto}</p>
+      ${st === 'pendente' && modo === 'ponte' && !falta ? '<button class="btn primary bloco" data-a="verificar">Verificar minha idade</button>' : ''}
+    </div>`;
+  }
+
+  async function verificar(id) {
+    try {
+      toast('Consultando…', 'info', 1500);
+      const v = await G.verificarNaPonte(id);
+      toast(v.status === 'aprovado' ? 'Maioridade confirmada ✅' : 'Não foi possível confirmar a maioridade', v.status === 'aprovado' ? 'ok' : 'erro', 4000);
+    } catch (err) {
+      toast(err.message, 'erro', 4500);
+    }
   }
 
   function abrirRecarga(c) {

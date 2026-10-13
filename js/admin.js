@@ -1,6 +1,7 @@
 // Painel administrativo: indicadores, vendas, produtos, estoque, validade, reposição, clientes, cupons, lojas e configurações.
 import * as D from './db.js';
 import * as Sess from './sessao.js';
+import * as G from './geladeira.js';
 import { $, $$, esc, brl, num, pct, toast, modal, confirmar, lerForm, baixar, csv, grafBarras, barraHoriz, logoSVG, fmtData, fmtDataHora, fmtIso, qrcode } from './ui.js';
 
 const DIA = 864e5;
@@ -13,6 +14,7 @@ const SECOES = [
   ['reposicao', '🚚', 'Reposição'],
   ['clientes', '👥', 'Clientes e carteira'],
   ['cupons', '🎟️', 'Cupons'],
+  ['geladeiras', '🧊', 'Geladeiras'],
   ['lojas', '🏪', 'Lojas e totens'],
   ['config', '⚙️', 'Configurações'],
 ];
@@ -22,7 +24,7 @@ const TIPO_MOV = { entrada: 'Entrada', venda: 'Venda', perda: 'Perda', ajuste: '
 
 // Filtros lembrados durante a sessão
 const F = (() => {
-  const padrao = { periodo: '30', de: '', ate: '', lojaVendas: '', busca: '', cat: '', estLoja: 'loja1', soBaixo: false, valLoja: '', valJanela: '7', repLoja: 'loja1', repOrigem: 'dep', cliBusca: '' };
+  const padrao = { periodo: '30', de: '', ate: '', lojaVendas: '', busca: '', cat: '', estLoja: 'loja1', soBaixo: false, valLoja: '', valJanela: '7', repLoja: 'loja1', repOrigem: 'dep', cliBusca: '', cliVerif: '', gelLoja: '' };
   try {
     return { ...padrao, ...JSON.parse(sessionStorage.getItem('mddb:filtros') || '{}') };
   } catch {
@@ -46,7 +48,7 @@ export function renderAdmin(root, secao = 'painel') {
       <aside class="adm-nav">
         <a class="adm-marca" href="#/">${logoSVG(34)}<span><b>${esc(D.cfg().nome)}</b><small>Administração</small></span></a>
         <nav>${SECOES.map(([id, ic, nome]) => {
-          const n = id === 'estoque' || id === 'reposicao' ? (id === 'reposicao' ? al.baixo.length : 0) : id === 'validade' ? al.vencidos.length + al.vencendo.length : 0;
+          const n = contador(id, al);
           return `<a href="#/admin/${id}" class="${id === secao ? 'ativo' : ''}"><span>${ic}</span>${nome}${n ? `<em>${n}</em>` : ''}</a>`;
         }).join('')}</nav>
         <button class="link sair" data-a="sair">Sair do painel</button>
@@ -64,7 +66,7 @@ export function renderAdmin(root, secao = 'painel') {
     const al2 = D.alertas();
     $$('.adm-nav a', root).forEach((a) => {
       const id = a.getAttribute('href').split('/').pop();
-      const n = id === 'reposicao' ? al2.baixo.length : id === 'validade' ? al2.vencidos.length + al2.vencendo.length : 0;
+      const n = contador(id, al2);
       a.querySelector('em')?.remove();
       if (n) a.insertAdjacentHTML('beforeend', `<em>${n}</em>`);
     });
@@ -96,6 +98,17 @@ function telaLogin(root, secao) {
 }
 
 // ---------- Utilidades ----------
+const pendentesIdade = () => D.db().clientes.filter((c) => c.verificacao?.status === 'pendente' && D.cpfValido(c.cpf)).length;
+const contador = (id, al) => (id === 'reposicao' ? al.baixo.length : id === 'validade' ? al.vencidos.length + al.vencendo.length : id === 'clientes' ? pendentesIdade() : 0);
+const FONTE = { manual: 'documento conferido', ponte: 'consulta automática', declarada: 'data informada pelo cliente' };
+function badgeIdade(c) {
+  const v = c.verificacao?.status;
+  const a = D.idade(c.nascimento);
+  if (v === 'aprovado') return `<span class="badge verde" title="${esc(FONTE[c.verificacao.fonte] || '')}">18+ ✓${a != null ? ` · ${a}a` : ''}</span>`;
+  if (v === 'recusado') return '<span class="badge vermelho">recusado</span>';
+  return D.cpfValido(c.cpf) ? '<span class="badge amarelo">pendente</span>' : '<span class="badge">sem CPF</span>';
+}
+const MODO_TRAVA = { simulada: 'Simulada (teste)', webhook: 'Webhook eWeLink direto', ponte: 'Ponte segura' };
 const cab = (titulo, acoes = '') => `<div class="adm-cab"><h1>${titulo}</h1><div class="acoes">${acoes}</div></div>`;
 const kpi = (rotulo, valor, sub = '', cls = '') => `<div class="kpi ${cls}"><small>${rotulo}</small><b>${valor}</b>${sub ? `<span>${sub}</span>` : ''}</div>`;
 const selLoja = (nome, valor, { todas = false, deposito = true, rotuloTodas = 'Todas as lojas' } = {}) =>
@@ -384,7 +397,7 @@ const VIEWS = {
         <thead><tr><th></th><th>Produto</th><th>Código de barras</th><th>Categoria</th><th class="n">Preço</th><th class="n">Custo</th><th class="n">Margem</th><th class="n">Mín.</th><th class="n">Estoque total</th><th></th></tr></thead>
         <tbody>${lista
           .map(
-            (p) => `<tr class="${p.ativo ? '' : 'inativo'}"><td class="emoji">${p.emoji}</td><td><b>${esc(p.nome)}</b>${p.ativo ? '' : ' <span class="badge">inativo</span>'}</td><td class="mono">${esc(p.ean || '—')}</td><td>${esc(p.categoria)}</td><td class="n">${brl(p.preco)}</td><td class="n">${brl(p.custo)}</td><td class="n">${pct(p.preco ? (p.preco - p.custo) / p.preco : 0)}</td><td class="n">${p.minimo}</td><td class="n">${num(D.estoqueTotal(p.id))}</td><td class="n"><button class="btn mini ghost" data-ed="${p.id}">Editar</button></td></tr>`,
+            (p) => `<tr class="${p.ativo ? '' : 'inativo'}"><td class="emoji">${p.emoji}</td><td><b>${esc(p.nome)}</b>${p.restrito18 ? ' <span class="selo18">18+</span>' : ''}${p.ativo ? '' : ' <span class="badge">inativo</span>'}</td><td class="mono">${esc(p.ean || '—')}</td><td>${esc(p.categoria)}</td><td class="n">${brl(p.preco)}</td><td class="n">${brl(p.custo)}</td><td class="n">${pct(p.preco ? (p.preco - p.custo) / p.preco : 0)}</td><td class="n">${p.minimo}</td><td class="n">${num(D.estoqueTotal(p.id))}</td><td class="n"><button class="btn mini ghost" data-ed="${p.id}">Editar</button></td></tr>`,
           )
           .join('')}</tbody></table></div>`;
       $$('[data-ed]', c).forEach((b) => (b.onclick = () => formProduto(D.produto(b.dataset.ed))));
@@ -592,7 +605,14 @@ const VIEWS = {
   clientes(main) {
     main.innerHTML =
       cab('Clientes e carteira', '<button class="btn ghost" data-a="csv">⬇ CSV</button><button class="btn primary" data-a="novo">+ Novo cliente</button>') +
-      `<div class="filtros"><input type="search" name="cliBusca" placeholder="Buscar por nome, CPF ou celular" value="${esc(F.cliBusca)}" aria-label="Buscar"></div><div data-c></div>`;
+      `<div class="filtros"><input type="search" name="cliBusca" placeholder="Buscar por nome, CPF ou celular" value="${esc(F.cliBusca)}" aria-label="Buscar"><select name="cliVerif" aria-label="Verificação de idade">${[['', 'Todas as verificações'], ['pendente', 'Idade pendente'], ['aprovado', 'Maioridade aprovada'], ['recusado', 'Recusados']]
+        .map(([v, t]) => `<option value="${v}" ${F.cliVerif === v ? 'selected' : ''}>${t}</option>`)
+        .join('')}</select></div><div data-c></div>`;
+    $('[name=cliVerif]', main).addEventListener('change', (e) => {
+      F.cliVerif = e.target.value;
+      lembrar();
+      desenhar();
+    });
     const c = $('[data-c]', main);
     $('[name=cliBusca]', main).addEventListener('input', (e) => {
       F.cliBusca = e.target.value;
@@ -616,7 +636,7 @@ const VIEWS = {
       }
       const mov30 = D.db().carteira.filter((m) => m.ts >= desde);
       const lista = D.db()
-        .clientes.filter((x) => !q || x.nome.toLowerCase().includes(q) || (qd.length >= 3 && (x.cpf.includes(qd) || x.telefone.includes(qd))))
+        .clientes.filter((x) => (!q || x.nome.toLowerCase().includes(q) || (qd.length >= 3 && (x.cpf.includes(qd) || x.telefone.includes(qd)))) && (!F.cliVerif || (x.verificacao?.status || 'pendente') === F.cliVerif))
         .sort((a, b) => a.nome.localeCompare(b.nome));
       c.innerHTML = `
         <div class="kpis">
@@ -624,16 +644,18 @@ const VIEWS = {
           ${kpi('Saldo em carteiras', brl(D.db().clientes.reduce((a, x) => a + x.saldo, 0)), 'valor já recebido, a consumir')}
           ${kpi('Recargas (30 d)', brl(mov30.filter((m) => m.tipo === 'recarga').reduce((a, m) => a + m.valor, 0)))}
           ${kpi('Bônus concedido (30 d)', brl(mov30.filter((m) => m.tipo === 'bonus').reduce((a, m) => a + m.valor, 0)))}
+          ${kpi('Idade a verificar', num(pendentesIdade()), 'clientes com CPF aguardando', pendentesIdade() ? 'alerta-vermelho' : '')}
         </div>
-        <div class="tabela-wrap"><table class="tabela"><thead><tr><th>Nome</th><th>Celular</th><th>CPF</th><th class="n">Saldo</th><th class="n">Compras</th><th class="n">Total gasto</th><th>Última compra</th><th class="n">Ações</th></tr></thead>
+        <div class="tabela-wrap"><table class="tabela"><thead><tr><th>Nome</th><th>Celular</th><th>CPF</th><th>Idade</th><th class="n">Saldo</th><th class="n">Compras</th><th class="n">Total gasto</th><th>Última compra</th><th class="n">Ações</th></tr></thead>
         <tbody>${lista
           .map((x) => {
             const s = st[x.id] || { n: 0, total: 0, ultima: 0 };
-            return `<tr><td><b>${esc(x.nome)}</b></td><td class="mono">${esc(x.telefone)}</td><td class="mono">${esc(x.cpf || '—')}</td><td class="n"><b>${brl(x.saldo)}</b></td><td class="n">${s.n}</td><td class="n">${brl(s.total)}</td><td>${s.ultima ? fmtData(s.ultima) : '—'}</td>
-              <td class="n nowrap"><button class="btn mini ghost" data-ext="${x.id}">Extrato</button><button class="btn mini ghost" data-rec="${x.id}">Recarga</button><button class="btn mini ghost" data-ed="${x.id}">Editar</button></td></tr>`;
+            return `<tr><td><b>${esc(x.nome)}</b></td><td class="mono">${esc(x.telefone)}</td><td class="mono">${esc(x.cpf || '—')}</td><td>${badgeIdade(x)}</td><td class="n"><b>${brl(x.saldo)}</b></td><td class="n">${s.n}</td><td class="n">${brl(s.total)}</td><td>${s.ultima ? fmtData(s.ultima) : '—'}</td>
+              <td class="n nowrap"><button class="btn mini ${x.verificacao?.status === 'pendente' && D.cpfValido(x.cpf) ? 'primary' : 'ghost'}" data-ver="${x.id}">Idade</button><button class="btn mini ghost" data-ext="${x.id}">Extrato</button><button class="btn mini ghost" data-rec="${x.id}">Recarga</button><button class="btn mini ghost" data-ed="${x.id}">Editar</button></td></tr>`;
           })
           .join('')}</tbody></table></div>`;
       $$('[data-ext]', c).forEach((b) => (b.onclick = () => extratoCliente(b.dataset.ext)));
+      $$('[data-ver]', c).forEach((b) => (b.onclick = () => verificacaoCliente(b.dataset.ver)));
       $$('[data-rec]', c).forEach((b) => (b.onclick = () => formRecarga(b.dataset.rec)));
       $$('[data-ed]', c).forEach((b) => (b.onclick = () => formCliente(D.cliente(b.dataset.ed))));
     };
@@ -656,6 +678,80 @@ const VIEWS = {
           .join('') || '<tr><td colspan="7" class="muted">Nenhum cupom.</td></tr>'
       }</tbody></table></div><p class="muted small">Os clientes veem os cupons ativos na área “Minha carteira” e aplicam no pagamento.</p>`;
       $$('[data-ed]', c).forEach((b) => (b.onclick = () => formCupom(D.db().cupons.find((k) => k.id === b.dataset.ed))));
+    };
+    desenhar();
+    return desenhar;
+  },
+
+  // ---------- Geladeiras ----------
+  geladeiras(main) {
+    main.innerHTML =
+      cab('Geladeiras com trava', '<button class="btn primary" data-a="nova">+ Nova geladeira</button>') +
+      `<div class="filtros">${selLoja('gelLoja', F.gelLoja, { todas: true, deposito: false })}</div><div data-c></div>`;
+    const c = $('[data-c]', main);
+    $('[data-a=nova]', main).onclick = () => formGeladeira();
+    $('.filtros', main).addEventListener('change', (e) => {
+      F.gelLoja = e.target.value;
+      lembrar();
+      desenhar();
+    });
+    const desenhar = () => {
+      const ini = D.inicioDoDia();
+      const gs = D.db().geladeiras.filter((g) => !F.gelLoja || g.lojaId === F.gelLoja);
+      const acessos = D.db().acessos.filter((a) => !F.gelLoja || a.lojaId === F.gelLoja);
+      const hoje = acessos.filter((a) => a.ts >= ini);
+      const negadas30 = acessos.filter((a) => !a.ok && a.ts >= ini - 29 * DIA);
+      const modo = D.cfg().idade.modo;
+      c.innerHTML = `
+        <div class="kpis">
+          ${kpi('Aberturas hoje', num(hoje.filter((a) => a.ok).length), `${hoje.filter((a) => !a.ok).length} negadas hoje`, 'destaque')}
+          ${kpi('Negadas (30 d)', num(negadas30.length), `${negadas30.filter((a) => /menor/i.test(a.motivo)).length} por menoridade`)}
+          ${kpi('Clientes 18+ verificados', num(D.db().clientes.filter((x) => x.verificacao?.status === 'aprovado').length))}
+          ${kpi('Verificação de idade', modo === 'ponte' ? 'Automática' : modo === 'manual' ? 'Manual' : 'Declarada', modo === 'ponte' ? 'consulta do CPF pela ponte' : modo === 'manual' ? 'documento conferido pelo operador' : '⚠️ só para demonstração', modo === 'declarada' ? 'alerta-vermelho' : '')}
+        </div>
+        ${modo === 'declarada' ? '<p class="aviso-adm">⚠️ No modo “declarada” o sistema aceita a data de nascimento digitada pelo próprio cliente. Não use em produção: troque para Manual ou Ponte em Configurações.</p>' : ''}
+        <div class="grade-lojas">${
+          gs
+            .map(
+              (g) => `<div class="cartao loja-card ${g.ativa ? '' : 'inativo'}">
+            <div class="lc-topo"><span class="lc-ic">🧊</span><div><b>${esc(g.nome)}</b><small>${esc(D.loja(g.lojaId)?.nome || '—')}</small></div></div>
+            <p class="muted small">${g.apenasMaiores ? '🔞 Somente maiores de 18' : 'Livre para todos'} · Trava: <b>${MODO_TRAVA[g.trava.modo]}</b> · abre por ${g.trava.segundos} s${g.ativa ? '' : ' · <b>inativa</b>'}</p>
+            ${g.trava.modo === 'webhook' ? '<p class="small txt-alerta">Modo de teste: a URL do webhook fica visível no navegador.</p>' : ''}
+            <div class="lc-acoes"><button class="btn mini primary" data-teste="${g.id}">🔓 Testar destravar</button><button class="btn mini ghost" data-ed="${g.id}">Editar</button></div>
+          </div>`,
+            )
+            .join('') || '<p class="muted">Nenhuma geladeira cadastrada.</p>'
+        }</div>
+        <section class="cartao"><h3>Últimas tentativas de abertura</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>Data</th><th>Geladeira</th><th>Cliente</th><th>Canal</th><th>Resultado</th></tr></thead><tbody>${
+          acessos
+            .slice(-120)
+            .reverse()
+            .map((a) => `<tr><td>${fmtDataHora(a.ts)}</td><td>${esc(D.geladeira(a.geladeiraId)?.nome || '—')}<br><small class="muted">${esc(D.loja(a.lojaId)?.nome || '')}</small></td><td>${esc(D.cliente(a.clienteId)?.nome || (a.teste ? 'Teste do administrador' : '—'))}</td><td>${a.canal === 'totem' ? 'Totem' : a.canal === 'celular' ? 'Celular' : 'Painel'}</td><td>${a.ok ? '<span class="badge verde">aberta</span>' : `<span class="badge vermelho">negada</span> <small>${esc(a.motivo)}</small>`}</td></tr>`)
+            .join('') || '<tr><td colspan="5" class="muted">Nenhuma tentativa ainda.</td></tr>'
+        }</tbody></table></div></section>
+        <section class="cartao"><h3>Como ligar a sua geladeira eWeLink</h3><ol class="passos">
+          <li>No app eWeLink, deixe o relé da trava em <b>modo pulso (inching)</b> com o tempo de abertura. Assim ele volta a travar sozinho.</li>
+          <li>Crie uma <b>Cena</b> com o gatilho <b>Webhook</b> e a ação “ligar” o relé. Copie a URL gerada.</li>
+          <li>Para testar rápido: cadastre a geladeira no modo <b>Webhook direto</b> e cole a URL.</li>
+          <li>Para usar com clientes: publique a <b>ponte</b> (pasta <code>ponte/</code> do projeto) com a URL do webhook e a chave do provedor de consulta de CPF. Depois troque a geladeira para o modo <b>Ponte</b> e a verificação para <b>Ponte</b> em Configurações. Com isso, a idade é conferida no servidor antes de destravar.</li>
+        </ol></section>`;
+      $$('[data-ed]', c).forEach((b) => (b.onclick = () => formGeladeira(D.geladeira(b.dataset.ed))));
+      $$('[data-teste]', c).forEach(
+        (b) =>
+          (b.onclick = async () => {
+            const g = D.geladeira(b.dataset.teste);
+            b.disabled = true;
+            try {
+              await G.acionarTrava(g, { teste: true });
+              D.registrarAcesso({ geladeiraId: g.id, lojaId: g.lojaId, clienteId: null, canal: 'painel', ok: true, teste: true, motivo: 'Teste' });
+              toast(g.trava.modo === 'webhook' ? 'Comando enviado. Confira se a trava abriu.' : 'Trava acionada ✅', 'ok', 4000);
+            } catch (err) {
+              toast(err.message, 'erro', 5000);
+            } finally {
+              b.disabled = false;
+            }
+          }),
+      );
     };
     desenhar();
     return desenhar;
@@ -713,6 +809,18 @@ const VIEWS = {
             <button class="btn primary">Salvar configurações</button>
           </form>
           <div>
+            <form class="cartao form-col" data-f="idade">
+              <h3>Verificação de idade (18+)</h3>
+              <label>Como confirmar a maioridade<select name="modo">
+                <option value="manual" ${k.idade.modo === 'manual' ? 'selected' : ''}>Manual: o operador confere o documento e aprova</option>
+                <option value="ponte" ${k.idade.modo === 'ponte' ? 'selected' : ''}>Automática: consulta do CPF pela ponte (recomendado)</option>
+                <option value="declarada" ${k.idade.modo === 'declarada' ? 'selected' : ''}>Declarada: aceita a data digitada (só demonstração)</option>
+              </select></label>
+              <label>Endereço da ponte<input name="ponteUrl" value="${esc(k.idade.ponteUrl)}" placeholder="https://ponte-mercado.seu-usuario.workers.dev"></label>
+              <div class="lado"><label>Chave do app<input name="ponteChave" value="${esc(k.idade.ponteChave)}" autocomplete="off"></label><label>Chave de administrador<input name="ponteChaveAdmin" type="password" value="${esc(k.idade.ponteChaveAdmin)}" autocomplete="off"></label></div>
+              <p class="muted small">As chaves precisam ser as mesmas cadastradas na ponte. A chave de administrador é usada só no botão “Testar destravar”.</p>
+              <div class="lado"><button class="btn primary">Salvar</button><button type="button" class="btn ghost" data-a="testar-ponte">Testar conexão</button></div>
+            </form>
             <section class="cartao form-col"><h3>Backup</h3>
               <p class="muted small">Nesta versão os dados ficam salvos neste navegador. Faça backup com frequência e use “Importar” para levar os dados a outro aparelho.</p>
               <div class="lado"><button class="btn ghost" data-a="exportar">⬇ Exportar backup</button><label class="btn ghost">⬆ Importar backup<input type="file" accept=".json,application/json" data-a="importar" hidden></label></div>
@@ -730,6 +838,22 @@ const VIEWS = {
         D.salvarConfig(d);
         toast('Configurações salvas', 'ok');
       });
+      $('[data-f=idade]', main).addEventListener('submit', (e) => {
+        e.preventDefault();
+        const d = lerForm(e.target);
+        if (d.ponteUrl && !/^https:\/\//.test(d.ponteUrl)) return toast('O endereço da ponte deve começar com https://', 'erro');
+        if (d.modo === 'ponte' && !d.ponteUrl) return toast('Informe o endereço da ponte', 'erro');
+        D.salvarConfig({ idade: d });
+        toast('Verificação de idade salva', 'ok');
+      });
+      $('[data-a=testar-ponte]', main).onclick = async () => {
+        try {
+          const r = await G.statusPonte();
+          toast(`Ponte ok · provedor: ${r.provedor} · geladeiras: ${(r.geladeiras || []).join(', ') || 'nenhuma'}`, 'ok', 5000);
+        } catch (err) {
+          toast(err.message, 'erro', 5000);
+        }
+      };
       $('[data-a=exportar]', main).onclick = () => baixar(`backup_mercado_${D.hoje()}.json`, D.exportar(), 'application/json');
       $('[data-a=importar]', main).addEventListener('change', async (e) => {
         const arq = e.target.files[0];
@@ -773,6 +897,7 @@ function formProduto(p = null) {
       <div class="lado"><label>Preço de venda (R$)<input name="preco" type="number" min="0" step="0.01" value="${p?.preco ?? ''}" required></label><label>Custo (R$)<input name="custo" type="number" min="0" step="0.01" value="${p?.custo ?? ''}"></label><label>Estoque mínimo por loja<input name="minimo" type="number" min="0" step="1" value="${p?.minimo ?? 3}"></label></div>
       <p class="muted small" data-margem></p>
       <label class="check"><input type="checkbox" name="ativo" ${p?.ativo === false ? '' : 'checked'}> Produto ativo (aparece no totem)</label>
+      <label class="check"><input type="checkbox" name="restrito18" ${p?.restrito18 ? 'checked' : ''}> 🔞 Proibido para menores de 18 anos (bebida alcoólica). A venda exige cliente identificado e com maioridade verificada.</label>
     </form>`,
     actions: [{ label: 'Cancelar' }, { label: 'Salvar', cls: 'primary', onClick: (ctx) => (D.salvarProduto(lerForm(ctx.el.querySelector('form'))), toast('Produto salvo', 'ok')) }],
   });
@@ -962,6 +1087,8 @@ function formCliente(c = null) {
       <input type="hidden" name="id" value="${c?.id || ''}">
       <label>Nome<input name="nome" value="${esc(c?.nome || '')}" required></label>
       <div class="lado"><label>Celular<input name="telefone" value="${esc(c?.telefone || '')}" inputmode="tel" required></label><label>CPF<input name="cpf" value="${esc(c?.cpf || '')}" inputmode="numeric"></label></div>
+      <label>Data de nascimento<input name="nascimento" type="date" value="${esc(c?.nascimento || '')}"></label>
+      ${c?.consentimento ? '' : '<label class="check"><input type="checkbox" name="consentimento"> O cliente autorizou o uso do CPF para verificação de idade (LGPD)</label>'}
       <label>E-mail<input name="email" type="email" value="${esc(c?.email || '')}"></label>
       <label>PIN (4 números)<input name="pin" value="${esc(c?.pin || '')}" inputmode="numeric" maxlength="4" required></label>
     </form>`,
@@ -1030,6 +1157,69 @@ function extratoCliente(id) {
       },
     ],
   });
+}
+
+function verificacaoCliente(id) {
+  const c = D.cliente(id);
+  const v = c.verificacao || { status: 'pendente' };
+  const a = D.idade(c.nascimento);
+  const ponte = D.cfg().idade.modo === 'ponte';
+  const m = modal({
+    title: `Verificação de idade · ${c.nome}`,
+    body: `<form class="form-col">
+      <div class="recibo">
+        <div class="linha"><span>CPF</span><span class="mono">${esc(c.cpf || '—')} ${c.cpf ? (D.cpfValido(c.cpf) ? '<span class="badge verde">válido</span>' : '<span class="badge vermelho">inválido</span>') : ''}</span></div>
+        <div class="linha"><span>Autorização LGPD</span><span>${c.consentimento ? `sim, ${fmtData(c.consentimento)}` : '<span class="badge vermelho">não</span>'}</span></div>
+        <div class="linha"><span>Situação</span><span>${badgeIdade(c)}</span></div>
+        ${v.ts ? `<div class="linha"><span>Última análise</span><span>${fmtDataHora(v.ts)} · ${esc(FONTE[v.fonte] || v.fonte || '')}${v.obs ? ` · ${esc(v.obs)}` : ''}</span></div>` : ''}
+      </div>
+      <label>Data de nascimento (confira no documento com foto)<input type="date" name="nascimento" value="${esc(c.nascimento || '')}"></label>
+      <p class="muted small" data-idade>${a != null ? `${a} anos` : ''}</p>
+      <p class="muted small">Confira se a foto do documento é da pessoa. O CPF sozinho não prova quem está comprando.</p>
+    </form>`,
+    actions: [
+      { label: 'Fechar' },
+      ...(ponte ? [{ label: 'Consultar CPF na ponte', cls: 'ghost', onClick: async () => { const r = await G.verificarNaPonte(id); toast(r.status === 'aprovado' ? 'Maioridade confirmada pela ponte ✅' : 'Ponte não confirmou a maioridade', r.status === 'aprovado' ? 'ok' : 'erro', 4000); } }] : []),
+      { label: 'Recusar', cls: 'danger', onClick: (ctx) => (D.definirVerificacao(id, 'recusado', { nascimento: ctx.el.querySelector('[name=nascimento]').value || null, obs: 'Recusado pelo operador' }), toast('Verificação recusada', 'ok')) },
+      { label: 'Aprovar: documento conferido', cls: 'primary', onClick: (ctx) => {
+        if (!D.cpfValido(c.cpf)) throw new Error('Cadastre um CPF válido antes de aprovar');
+        const n = ctx.el.querySelector('[name=nascimento]').value;
+        if (!n) throw new Error('Informe a data de nascimento do documento');
+        D.definirVerificacao(id, 'aprovado', { nascimento: n, obs: 'Documento conferido pelo operador' });
+        toast('Maioridade aprovada ✅', 'ok');
+      } },
+    ],
+  });
+  const f = m.el.querySelector('form');
+  f.nascimento.addEventListener('input', () => {
+    const x = D.idade(f.nascimento.value);
+    f.querySelector('[data-idade]').innerHTML = x == null ? '' : x >= 18 ? `${x} anos ✅` : `<span class="txt-alerta">${x} anos: menor de idade</span>`;
+  });
+}
+
+function formGeladeira(g = null) {
+  const t = g?.trava || { modo: 'simulada', webhookUrl: '', ponteId: '', segundos: 8 };
+  const m = modal({
+    title: g ? 'Editar geladeira' : 'Nova geladeira',
+    body: `<form class="form-col">
+      <input type="hidden" name="id" value="${g?.id || ''}">
+      <label>Nome<input name="nome" value="${esc(g?.nome || 'Geladeira de bebidas')}" required></label>
+      <label>Loja${selLoja('lojaId', g?.lojaId || D.lojasVenda()[0]?.id, { deposito: false })}</label>
+      <label class="check"><input type="checkbox" name="apenasMaiores" ${g?.apenasMaiores === false ? '' : 'checked'}> 🔞 Somente maiores de 18 anos</label>
+      <label>Como acionar a trava<select name="modo">${Object.entries(MODO_TRAVA).map(([v, n]) => `<option value="${v}" ${t.modo === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <label data-m="webhook">URL do webhook da Cena eWeLink<input name="webhookUrl" value="${esc(t.webhookUrl)}" placeholder="https://…"></label>
+      <p class="small txt-alerta" data-m="webhook">Só para testes: a URL fica visível no navegador e quem tiver acesso a ela abre a geladeira.</p>
+      <label data-m="ponte">Identificador na ponte<input name="ponteId" value="${esc(t.ponteId || g?.id || '')}" placeholder="ex.: g1"></label>
+      <label>Tempo destravada (segundos)<input name="segundos" type="number" min="3" max="60" value="${t.segundos}"></label>
+      <p class="muted small">Use o mesmo tempo do modo pulso (inching) configurado no eWeLink.</p>
+      <label class="check"><input type="checkbox" name="ativa" ${g?.ativa === false ? '' : 'checked'}> Ativa</label>
+    </form>`,
+    actions: [{ label: 'Cancelar' }, { label: 'Salvar', cls: 'primary', onClick: (ctx) => (D.salvarGeladeira(lerForm(ctx.el.querySelector('form'))), toast('Geladeira salva', 'ok')) }],
+  });
+  const f = m.el.querySelector('form');
+  const mostrar = () => $$('[data-m]', f).forEach((el) => (el.hidden = el.dataset.m !== f.modo.value));
+  f.modo.addEventListener('change', mostrar);
+  mostrar();
 }
 
 function formCupom(k = null) {

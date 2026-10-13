@@ -3,6 +3,7 @@ import * as D from './db.js';
 import * as Sess from './sessao.js';
 import { $, $$, esc, brl, toast, modal, bip, logoSVG, tecladoHTML, ligarTeclado } from './ui.js';
 import { abrirCamera, escutarLeitor } from './scanner.js';
+import * as G from './geladeira.js';
 
 const NOME_PAG = { credito: 'Cartão de crédito', debito: 'Cartão de débito', saldo: 'Saldo da carteira' };
 const OCIOSO_MS = 120e3;
@@ -54,7 +55,13 @@ export function renderCheckout(root, { lojaId, modo }) {
 
   function renderConta() {
     if (totem) {
-      contaEl.innerHTML = `<span class="relogio"></span><a class="link-discreto" href="#/admin" title="Administração">⚙</a>`;
+      const ident = st.clienteId && D.cliente(st.clienteId);
+      contaEl.innerHTML = `${ident ? `<button class="chip-conta" data-a="sair-id" title="Encerrar identificação">👤 ${esc(ident.nome.split(' ')[0])}${D.situacaoIdade(ident).ok ? ' ✓' : ''} · sair</button>` : ''}<span class="relogio"></span><a class="link-discreto" href="#/admin" title="Administração">⚙</a>`;
+      $('[data-a=sair-id]', contaEl)?.addEventListener('click', () => {
+        st.clienteId = null;
+        renderConta();
+        if (st.etapa === 'pagamento') telaPagamento();
+      });
       const r = $('.relogio', contaEl);
       const tick = () => (r.textContent = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
       tick();
@@ -75,6 +82,7 @@ export function renderCheckout(root, { lojaId, modo }) {
       <section class="co-catalogo">
         <div class="co-scan">
           <button class="btn primary grande" data-a="camera">📷 Escanear código de barras</button>
+          ${D.geladeirasDaLoja(lojaId).length ? '<button class="btn lime grande" data-a="geladeira">🧊 Abrir geladeira</button>' : ''}
           <form class="co-busca" autocomplete="off">
             <input type="search" name="q" placeholder="${totem ? 'Passe no leitor, digite o código ou o nome' : 'Buscar produto ou digitar código'}" value="${esc(st.busca)}" aria-label="Buscar produto">
           </form>
@@ -95,6 +103,7 @@ export function renderCheckout(root, { lojaId, modo }) {
       ${totem ? '' : '<button class="cc-barra" data-a="abrir-carrinho"><span>🛒 <b data-qtd>0</b> itens</span><b data-total>R$ 0,00</b><span class="cc-ver">Ver carrinho ›</span></button>'}`;
 
     $('[data-a=camera]', corpo).onclick = () => abrirCamera(lerCodigo);
+    $('[data-a=geladeira]', corpo)?.addEventListener('click', () => telaGeladeira());
     const form = $('.co-busca', corpo);
     const inp = form.q;
     inp.addEventListener('input', () => {
@@ -154,7 +163,7 @@ export function renderCheckout(root, { lojaId, modo }) {
       ? lista
           .map((p) => {
             const q = st.cart.get(p.id) || 0;
-            return `<button class="prod" data-p="${p.id}"><span class="prod-emoji">${p.emoji}</span><span class="prod-nome">${esc(p.nome)}</span><span class="prod-preco">${brl(p.preco)}</span>${q ? `<span class="prod-qtd">${q}</span>` : ''}</button>`;
+            return `<button class="prod" data-p="${p.id}"><span class="prod-emoji">${p.emoji}</span><span class="prod-nome">${esc(p.nome)}</span><span class="prod-preco">${brl(p.preco)}</span>${p.restrito18 ? '<span class="selo18">18+</span>' : ''}${q ? `<span class="prod-qtd">${q}</span>` : ''}</button>`;
           })
           .join('')
       : '<p class="muted">Nenhum produto encontrado.</p>';
@@ -170,7 +179,7 @@ export function renderCheckout(root, { lojaId, modo }) {
           .map(
             (l) => `<div class="cc-item">
               <span class="cc-emoji">${l.emoji}</span>
-              <span class="cc-info"><b>${esc(l.nome)}</b><small>${brl(l.preco)} un.</small></span>
+              <span class="cc-info"><b>${esc(l.nome)}${l.restrito18 ? ' <span class="selo18">18+</span>' : ''}</b><small>${brl(l.preco)} un.</small></span>
               <span class="qtd"><button data-menos="${l.produtoId}" aria-label="Diminuir">−</button><b>${l.qtd}</b><button data-mais="${l.produtoId}" aria-label="Aumentar">+</button></span>
               <span class="cc-val">${brl(l.total)}</span>
             </div>`,
@@ -223,10 +232,14 @@ export function renderCheckout(root, { lojaId, modo }) {
     const c = conta();
     if (st.cupom && c.erroCupom) st.cupom = '';
     const r = conta();
+    const restrito = r.linhas.some((l) => l.restrito18);
+    const ident = st.clienteId && D.cliente(st.clienteId);
+    const identOk = ident && D.situacaoIdade(ident).ok;
     corpo.innerHTML = `
       <section class="pay">
         <button class="link voltar" data-a="voltar">‹ Voltar ao carrinho</button>
         <h1>Como você quer pagar?</h1>
+        ${restrito ? `<div class="aviso-18"><span>🔞</span><p>Seu carrinho tem bebida alcoólica, proibida para menores de 18 anos.${identOk ? ` Maioridade confirmada: <b>${esc(ident.nome.split(' ')[0])}</b> ✓` : ' Vamos confirmar sua identidade antes do pagamento.'}</p></div>` : ''}
         <div class="pay-grade">
           <div class="cartao pay-resumo">
             <h3>Resumo · ${r.qtdItens} ${r.qtdItens === 1 ? 'item' : 'itens'}</h3>
@@ -271,9 +284,10 @@ export function renderCheckout(root, { lojaId, modo }) {
       (b) =>
         (b.onclick = () => {
           const t = b.dataset.pag;
+          const seguir = () => (t === 'totem' ? telaCodigoCelular() : telaCartao(t));
           if (t === 'saldo') telaSaldo();
-          else if (t === 'totem') telaCodigoCelular();
-          else telaCartao(t);
+          else if (restrito) exigirMaior(seguir);
+          else seguir();
         }),
     );
     persistir();
@@ -339,10 +353,12 @@ export function renderCheckout(root, { lojaId, modo }) {
             actions: totem ? [{ label: 'Pagar no cartão', cls: 'primary', onClick: telaPagamento }] : [{ label: 'Voltar' }, { label: 'Recarregar agora', cls: 'primary', onClick: () => (location.hash = '#/cliente') }],
           });
         }
-        if (!totem) {
-          Sess.entrarCliente(cli.id);
-          st.clienteId = cli.id;
+        if (r.linhas.some((l) => l.restrito18)) {
+          const si = D.situacaoIdade(cli);
+          if (!si.ok) return negadoIdade(si);
         }
+        st.clienteId = cli.id;
+        if (!totem) Sess.entrarCliente(cli.id);
         concluir({ pagamento: 'saldo', clienteId: cli.id });
       } catch (err) {
         bip(false);
@@ -354,7 +370,7 @@ export function renderCheckout(root, { lojaId, modo }) {
 
   function concluir({ pagamento, autorizacao = null, clienteId = null }) {
     try {
-      st.venda = D.finalizarVenda({ lojaId, canal: modo, itens: itens(), pagamento, clienteId, cupom: st.cupom, autorizacao });
+      st.venda = D.finalizarVenda({ lojaId, canal: modo, itens: itens(), pagamento, clienteId: clienteId || st.clienteId, cupom: st.cupom, autorizacao });
     } catch (err) {
       toast(err.message, 'erro', 4500);
       return telaPagamento();
@@ -446,6 +462,151 @@ export function renderCheckout(root, { lojaId, modo }) {
     ligarTeclado(m.el.querySelector('form'));
   }
 
+  // ---------- Identificação e maioridade ----------
+  function telaIdentificar({ titulo, texto, aoOk, voltar = telaCompra }) {
+    st.etapa = 'identificar';
+    const logado = !totem && st.clienteId && D.cliente(st.clienteId);
+    corpo.innerHTML = `
+      <section class="pay pay-centro">
+        <button class="link voltar" data-a="voltar">‹ Voltar</button>
+        <h1>${titulo}</h1>
+        <p class="grande-txt">${texto}</p>
+        <form class="form-ident cartao" autocomplete="off">
+          ${logado ? `<p>Olá, <b>${esc(logado.nome.split(' ')[0])}</b>! Confirme com seu PIN.</p>` : '<label>CPF ou celular<input name="ident" inputmode="numeric" maxlength="14" required></label>'}
+          <label>PIN (4 números)<input name="pin" type="password" inputmode="numeric" maxlength="4" required></label>
+          ${totem ? tecladoHTML() : ''}
+          <button class="btn lime grande bloco">Continuar</button>
+          ${totem ? '' : '<a class="link" href="#/cliente">Ainda não tem cadastro? Crie sua conta</a>'}
+        </form>
+      </section>`;
+    $('[data-a=voltar]', corpo).onclick = voltar;
+    const f = $('.form-ident', corpo);
+    if (totem) ligarTeclado(f);
+    f.addEventListener('submit', (e) => {
+      e.preventDefault();
+      try {
+        const cli = logado ? D.autenticar(logado.cpf || logado.telefone, f.pin.value) : D.autenticar(f.ident.value, f.pin.value);
+        st.clienteId = cli.id;
+        if (!totem) Sess.entrarCliente(cli.id);
+        renderConta();
+        aoOk(cli);
+      } catch (err) {
+        bip(false);
+        toast(err.message, 'erro', 3500);
+        f.pin.value = '';
+      }
+    });
+  }
+
+  function exigirMaior(seguir) {
+    const cli = st.clienteId && D.cliente(st.clienteId);
+    const continuar = (c) => {
+      const si = D.situacaoIdade(c);
+      return si.ok ? seguir() : negadoIdade(si);
+    };
+    if (cli) return continuar(cli);
+    telaIdentificar({
+      titulo: '🔞 Confirme sua identidade',
+      texto: 'Bebida alcoólica só pode ser vendida para maiores de 18 anos. Informe seu CPF ou celular e o PIN da sua conta.',
+      aoOk: continuar,
+      voltar: telaPagamento,
+    });
+  }
+
+  function negadoIdade(si, { geladeira = false } = {}) {
+    st.etapa = 'negado';
+    bip(false);
+    const comoResolver = si.pendente
+      ? D.cfg().idade.modo === 'ponte'
+        ? 'Abra “Minha carteira” no celular, confira seu CPF e data de nascimento e toque em “Verificar minha idade”.'
+        : 'Mostre um documento com foto ao responsável pela loja para liberar seu cadastro.'
+      : si.recusado
+        ? 'Se você acha que houve um erro, fale com o responsável pela loja.'
+        : '';
+    corpo.innerHTML = `
+      <section class="pay pay-centro">
+        <div class="negado-circulo">⛔</div>
+        <h1>${geladeira ? 'Não foi possível abrir a geladeira' : 'Não podemos concluir esta compra'}</h1>
+        <p class="grande-txt">${esc(si.motivo)}</p>
+        ${comoResolver ? `<p>${comoResolver}</p>` : ''}
+        ${!geladeira && st.cart.size ? '<button class="btn primary grande" data-a="tirar18">Remover itens 18+ e continuar</button>' : ''}
+        <button class="btn ghost-escuro" data-a="voltar">${geladeira ? 'Voltar às compras' : 'Voltar ao carrinho'}</button>
+      </section>`;
+    $('[data-a=voltar]', corpo).onclick = () => {
+      if (totem) st.clienteId = null;
+      renderConta();
+      telaCompra();
+    };
+    $('[data-a=tirar18]', corpo)?.addEventListener('click', () => {
+      for (const id of [...st.cart.keys()]) if (D.produto(id)?.restrito18) st.cart.delete(id);
+      if (totem) st.clienteId = null;
+      renderConta();
+      st.cart.size ? telaPagamento() : telaCompra();
+    });
+  }
+
+  // ---------- Geladeira com trava ----------
+  function telaGeladeira(escolhida = null) {
+    const gs = D.geladeirasDaLoja(lojaId);
+    const g = escolhida || (gs.length === 1 ? gs[0] : null);
+    if (!g) {
+      st.etapa = 'geladeira';
+      corpo.innerHTML = `
+        <section class="pay pay-centro">
+          <button class="link voltar" data-a="voltar">‹ Voltar</button>
+          <h1>🧊 Qual geladeira?</h1>
+          <div class="pay-opcoes lista-gel">${gs.map((x) => `<button class="opcao" data-g="${x.id}"><span>🧊</span><b>${esc(x.nome)}</b><small>${x.apenasMaiores ? 'Somente maiores de 18 anos' : 'Livre'}</small></button>`).join('')}</div>
+        </section>`;
+      $('[data-a=voltar]', corpo).onclick = telaCompra;
+      $$('[data-g]', corpo).forEach((b) => (b.onclick = () => telaGeladeira(D.geladeira(b.dataset.g))));
+      return;
+    }
+    const executar = async (cli) => {
+      st.etapa = 'abrindo';
+      corpo.innerHTML = `<section class="pay pay-centro"><div class="maquininha">🧊</div><h1>${g.apenasMaiores ? 'Conferindo sua idade…' : 'Destravando…'}</h1><p class="aguarde"><span class="pontos"></span> Aguarde um instante</p></section>`;
+      const r = await G.abrirGeladeira({ geladeiraId: g.id, clienteId: cli.id, canal: modo });
+      if (st.etapa !== 'abrindo') return;
+      if (!r.ok && r.falhaTecnica) {
+        bip(false);
+        toast(`Não foi possível destravar: ${r.motivo}`, 'erro', 5000);
+        return telaCompra();
+      }
+      if (!r.ok) return negadoIdade(r, { geladeira: true });
+      telaGeladeiraAberta(g, r.segundos, cli);
+    };
+    // No totem, cada abertura pede CPF/celular + PIN (outra pessoa pode estar usando a tela).
+    telaIdentificar({
+      titulo: `🧊 ${esc(g.nome)}`,
+      texto: g.apenasMaiores ? 'Exclusiva para maiores de 18 anos. Identifique-se para destravar a porta.' : 'Identifique-se para destravar a porta.',
+      aoOk: executar,
+    });
+  }
+
+  function telaGeladeiraAberta(g, segundos, cli) {
+    st.etapa = 'aberta';
+    bip();
+    corpo.innerHTML = `
+      <section class="pay pay-centro fim">
+        <div class="ok-circulo">🔓</div>
+        <h1>Geladeira destravada!</h1>
+        <p class="grande-txt">${esc(cli.nome.split(' ')[0])}, puxe a porta agora. Ela trava de novo em <b data-seg>${segundos}</b> s.</p>
+        <p>Pegue seus produtos, feche a porta e escaneie tudo aqui para pagar.</p>
+        <button class="btn primary grande" data-a="comprar">📷 Escanear meus produtos</button>
+      </section>`;
+    $('[data-a=comprar]', corpo).onclick = telaCompra;
+    let s = segundos;
+    const iv = setInterval(() => {
+      s--;
+      const el = $('[data-seg]', corpo);
+      if (el) el.textContent = Math.max(s, 0);
+      if (s <= 0 || st.etapa !== 'aberta') {
+        clearInterval(iv);
+        if (st.etapa === 'aberta') telaCompra();
+      }
+    }, 1000);
+    limpar.push(() => clearInterval(iv));
+  }
+
   function abrirLogin() {
     modal({
       title: 'Entrar na carteira',
@@ -474,7 +635,9 @@ export function renderCheckout(root, { lojaId, modo }) {
     st.busca = '';
     st.cat = 'Todos';
     st.venda = null;
+    if (totem) st.clienteId = null;
     persistir();
+    renderConta();
     document.querySelectorAll('.modal-wrap').forEach((m) => m.remove());
     telaCompra();
   }

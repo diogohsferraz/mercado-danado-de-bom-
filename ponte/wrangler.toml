@@ -1,0 +1,14 @@
+name = "ponte-mercado"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+PROVEDOR = "teste"                                # teste | serpro | http
+ORIGEM = "https://diogohsferraz.github.io"         # endereço do app (CORS)
+TESTE_MENORES = "52998224725"                     # só no modo teste
+
+# Opcional (recomendado): cache do resultado para não pagar a consulta toda vez.
+# Crie com: npx wrangler kv namespace create IDADES   e cole o id abaixo.
+# [[kv_namespaces]]
+# binding = "IDADES"
+# id = "COLE_O_ID_AQUI"

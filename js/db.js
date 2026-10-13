@@ -27,6 +27,36 @@ export function diasAte(iso) {
   h.setHours(0, 0, 0, 0);
   return Math.round((alvo - h) / DIA);
 }
+export function idade(iso) {
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(Number);
+  const h = new Date();
+  let a = h.getFullYear() - y;
+  if (h.getMonth() + 1 < m || (h.getMonth() + 1 === m && h.getDate() < d)) a--;
+  return a;
+}
+// Valida os dígitos verificadores do CPF.
+export function cpfValido(cpf) {
+  const c = digitos(cpf);
+  if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
+  const dv = (n) => {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += +c[i] * (n + 1 - i);
+    const r = (s * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return dv(9) === +c[9] && dv(10) === +c[10];
+}
+function cpfComDv(base9) {
+  let c = base9;
+  for (const n of [9, 10]) {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += +c[i] * (n + 1 - i);
+    const r = (s * 10) % 11;
+    c += r === 10 ? 0 : r;
+  }
+  return c;
+}
 export function inicioDoDia(ts = Date.now()) {
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
@@ -40,11 +70,22 @@ export function carregar() {
   } catch {
     S = null;
   }
-  if (!S || S.versao !== 1) {
-    S = semente();
-    gravar();
-  }
+  if (!S || ![1, 2].includes(S.versao)) S = semente();
+  else migrar(S);
+  gravar();
   return S;
+}
+// Atualiza dados salvos por versões anteriores.
+function migrar(s) {
+  s.geladeiras ||= [];
+  s.acessos ||= [];
+  s.config.idade ||= { modo: 'manual', ponteUrl: '', ponteChave: '', ponteChaveAdmin: '' };
+  s.clientes.forEach((c) => {
+    c.nascimento ??= '';
+    c.verificacao ||= { status: 'pendente', fonte: '', ts: 0, obs: '' };
+  });
+  s.produtos.forEach((p) => (p.restrito18 ??= false));
+  s.versao = 2;
 }
 function gravar() {
   try {
@@ -191,7 +232,7 @@ export function calcular(itens, codigoCupom = '') {
   const linhas = itens
     .map((i) => {
       const p = produto(i.produtoId);
-      return p && { produtoId: p.id, nome: p.nome, emoji: p.emoji, qtd: i.qtd, preco: p.preco, custo: p.custo, total: arred(p.preco * i.qtd) };
+      return p && { produtoId: p.id, nome: p.nome, emoji: p.emoji, restrito18: !!p.restrito18, qtd: i.qtd, preco: p.preco, custo: p.custo, total: arred(p.preco * i.qtd) };
     })
     .filter(Boolean);
   const subtotal = arred(linhas.reduce((a, l) => a + l.total, 0));
@@ -225,6 +266,10 @@ export function finalizarVenda({ lojaId, canal, itens, pagamento, clienteId = nu
   if (pagamento === 'saldo') {
     if (!cli) throw new Error('Identifique-se para pagar com saldo');
     if (cli.saldo + 1e-9 < c.total) throw new Error(`Saldo insuficiente. Seu saldo é ${brl(cli.saldo)}`);
+  }
+  if (c.linhas.some((l) => l.restrito18)) {
+    const si = situacaoIdade(cli);
+    if (!si.ok) throw new Error(`Produto proibido para menores de 18 anos. ${si.motivo}`);
   }
   const venda = {
     id: uid('v'),
@@ -312,20 +357,77 @@ export function autenticar(ident, pin) {
 export function salvarCliente(dados) {
   const cpf = digitos(dados.cpf);
   const tel = digitos(dados.telefone);
+  const nasc = dados.nascimento || '';
   if (!dados.nome) throw new Error('Informe o nome');
-  if (cpf && cpf.length !== 11) throw new Error('CPF deve ter 11 dígitos');
+  if (cpf && !cpfValido(cpf)) throw new Error('CPF inválido. Confira os números');
   if (tel.length < 10) throw new Error('Celular deve ter DDD + número');
+  if (nasc && !(idade(nasc) >= 0 && idade(nasc) <= 120)) throw new Error('Data de nascimento inválida');
   if (!/^\d{4}$/.test(dados.pin || '')) throw new Error('O PIN deve ter 4 números');
   const dup = S.clientes.find((c) => c.id !== dados.id && ((cpf && digitos(c.cpf) === cpf) || digitos(c.telefone) === tel));
   if (dup) throw new Error('Já existe cliente com este CPF ou celular');
   let c = dados.id && cliente(dados.id);
-  if (c) Object.assign(c, { nome: dados.nome, cpf, telefone: tel, email: dados.email || '', pin: dados.pin });
-  else {
-    c = { id: uid('c'), nome: dados.nome, cpf, telefone: tel, email: dados.email || '', pin: dados.pin, saldo: 0, criado: Date.now(), ativo: true };
+  if (cpf && !dados.consentimento && !c?.consentimento) throw new Error('Marque a autorização para usar o CPF na verificação de idade');
+  const campos = { nome: dados.nome, cpf, telefone: tel, email: dados.email || '', pin: dados.pin, nascimento: nasc };
+  if (c) {
+    // Trocar CPF ou nascimento invalida a verificação de idade já feita.
+    const mudou = c.cpf !== cpf || c.nascimento !== nasc;
+    Object.assign(c, campos);
+    if (dados.consentimento && !c.consentimento) c.consentimento = Date.now();
+    if (mudou) c.verificacao = { status: 'pendente', fonte: '', ts: Date.now(), obs: 'Dados alterados' };
+  } else {
+    c = { id: uid('c'), ...campos, saldo: 0, criado: Date.now(), ativo: true, consentimento: dados.consentimento ? Date.now() : 0, verificacao: { status: 'pendente', fonte: '', ts: 0, obs: '' } };
     S.clientes.push(c);
   }
+  // Modo de demonstração: aceita a data informada pelo próprio cliente.
+  if (S.config.idade.modo === 'declarada' && c.verificacao.status === 'pendente' && cpf && idade(nasc) >= 18)
+    c.verificacao = { status: 'aprovado', fonte: 'declarada', ts: Date.now(), obs: 'Data informada pelo cliente' };
   salvar();
   return c;
+}
+
+// ---------- Maioridade e geladeiras ----------
+export function situacaoIdade(cli) {
+  if (!cli) return { ok: false, motivo: 'Identifique-se com CPF ou celular e PIN.' };
+  const v = cli.verificacao?.status;
+  if (v === 'aprovado') return { ok: true, idade: idade(cli.nascimento) };
+  if (v === 'recusado') return { ok: false, motivo: 'Não foi possível confirmar que você tem 18 anos ou mais.', recusado: true };
+  return { ok: false, motivo: 'Sua idade ainda não foi verificada.', pendente: true };
+}
+export function definirVerificacao(clienteId, status, { fonte = 'manual', nascimento = null, obs = '' } = {}) {
+  const c = cliente(clienteId);
+  if (!c) throw new Error('Cliente não encontrado');
+  if (nascimento) c.nascimento = nascimento;
+  if (status === 'aprovado' && fonte !== 'ponte' && !(idade(c.nascimento) >= 18)) throw new Error('Pela data de nascimento, o cliente tem menos de 18 anos');
+  c.verificacao = { status, fonte, ts: Date.now(), obs };
+  salvar();
+}
+export const geladeira = (id) => S.geladeiras.find((g) => g.id === id);
+export const geladeirasDaLoja = (lojaId) => S.geladeiras.filter((g) => g.lojaId === lojaId && g.ativa && loja(g.lojaId)?.ativa);
+export function salvarGeladeira(d) {
+  if (!d.nome) throw new Error('Informe o nome');
+  if (!loja(d.lojaId)) throw new Error('Escolha a loja');
+  const modo = ['simulada', 'webhook', 'ponte'].includes(d.modo) ? d.modo : 'simulada';
+  if (modo === 'webhook' && !/^https:\/\//.test(d.webhookUrl || '')) throw new Error('Informe a URL do webhook (https://…)');
+  const campos = {
+    nome: d.nome,
+    lojaId: d.lojaId,
+    apenasMaiores: d.apenasMaiores !== false,
+    ativa: d.ativa !== false,
+    trava: { modo, webhookUrl: d.webhookUrl || '', ponteId: d.ponteId || '', segundos: Math.min(60, Math.max(3, Math.floor(d.segundos || 8))) },
+  };
+  let g = d.id && geladeira(d.id);
+  if (g) Object.assign(g, campos);
+  else {
+    g = { id: uid('g'), ...campos };
+    S.geladeiras.push(g);
+  }
+  salvar();
+  return g;
+}
+export function registrarAcesso(a) {
+  S.acessos.push({ id: uid('a'), ts: Date.now(), ...a });
+  if (S.acessos.length > 3000) S.acessos.splice(0, S.acessos.length - 3000);
+  salvar();
 }
 export function recarregar(clienteId, valor, meio) {
   const cli = cliente(clienteId);
@@ -411,6 +513,7 @@ export function salvarProduto(d) {
     custo: arred(d.custo || 0),
     minimo: Math.max(0, Math.floor(d.minimo || 0)),
     emoji: d.emoji || '📦',
+    restrito18: !!d.restrito18,
     ativo: d.ativo !== false,
   };
   let p = d.id && produto(d.id);
@@ -462,7 +565,8 @@ export function salvarConfig(d) {
 export const exportar = () => JSON.stringify(S, null, 1);
 export function importar(texto) {
   const novo = JSON.parse(texto);
-  if (novo?.versao !== 1 || !Array.isArray(novo.produtos)) throw new Error('Arquivo de backup inválido');
+  if (![1, 2].includes(novo?.versao) || !Array.isArray(novo.produtos)) throw new Error('Arquivo de backup inválido');
+  migrar(novo);
   S = novo;
   salvar();
 }
@@ -486,7 +590,7 @@ function digitoEan(d12) {
 
 function estrutura(config) {
   return {
-    versao: 1,
+    versao: 2,
     config: config || {
       nome: 'Mercado Danado de Bom',
       slogan: 'Pegou, passou, levou. Danado de bom!',
@@ -495,7 +599,10 @@ function estrutura(config) {
       bonusRecargaMin: 50,
       diasAlertaValidade: 7,
       coberturaDias: 7,
+      idade: { modo: 'manual', ponteUrl: '', ponteChave: '', ponteChaveAdmin: '' },
     },
+    geladeiras: [],
+    acessos: [],
     lojas: [],
     categorias: [],
     produtos: [],
@@ -513,6 +620,7 @@ function estrutura(config) {
 
 function semente() {
   let x = 20261013;
+  const cliente0 = (id) => s.clientes.find((c) => c.id === id);
   const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648) / 2147483648);
   const int = (a, b) => a + Math.floor(rnd() * (b - a + 1));
   const s = estrutura();
@@ -565,11 +673,15 @@ function semente() {
     ['Detergente 500ml', 'Limpeza', 2.9, 1.5, 4, '🫧', 0],
     ['Sabão em pó 800g', 'Limpeza', 14.9, 9.1, 2, '🧺', 0],
     ['Água sanitária 1L', 'Limpeza', 4.5, 2.2, 2, '🧴', 0],
+    ['Cerveja pilsen lata 350ml', 'Bebidas alcoólicas', 4.9, 2.6, 12, '🍺', 180, true, true],
+    ['Cerveja puro malte long neck 330ml', 'Bebidas alcoólicas', 7.9, 4.3, 8, '🍻', 180, true, true],
+    ['Drink pronto de limão 269ml', 'Bebidas alcoólicas', 8.9, 4.4, 6, '🍹', 240, true, true],
+    ['Vinho tinto suave 750ml', 'Bebidas alcoólicas', 29.9, 16.5, 2, '🍷', 0, true, true],
   ];
   const h = hoje();
-  s.produtos = cat.map(([nome, categoria, preco, custo, minimo, emoji, val, comEan = true], i) => {
+  s.produtos = cat.map(([nome, categoria, preco, custo, minimo, emoji, val, comEan = true, restrito = false], i) => {
     const base = '789' + '7316' + String(10000 + i * 37).slice(-5);
-    return { id: 'p' + (i + 1), nome, categoria, preco, custo, minimo, emoji, ativo: true, ean: comEan ? base + digitoEan(base) : '', _val: val };
+    return { id: 'p' + (i + 1), nome, categoria, preco, custo, minimo, emoji, ativo: true, restrito18: restrito, ean: comEan ? base + digitoEan(base) : '', _val: val };
   });
   s.categorias = [...new Set(s.produtos.map((p) => p.categoria))];
 
@@ -597,20 +709,28 @@ function semente() {
   s.clientes = nomes.map((nome, i) => ({
     id: 'c' + (i + 1),
     nome,
-    cpf: String(10000000000 + i * 1234567891).slice(0, 11),
+    cpf: cpfComDv(String(100000000 + i * 123456789).slice(0, 9)),
     telefone: '8299' + String(1000000 + i * 734521).slice(0, 7),
     email: '',
     pin: '1234',
     saldo: 0,
     criado: Date.now() - int(30, 120) * DIA,
     ativo: true,
+    consentimento: Date.now() - 30 * DIA,
+    nascimento: `${1975 + int(0, 30)}-${String(int(1, 12)).padStart(2, '0')}-${String(int(1, 28)).padStart(2, '0')}`,
+    verificacao: { status: 'aprovado', fonte: 'manual', ts: Date.now() - 20 * DIA, obs: 'Documento conferido na loja' },
   }));
+  // Um menor de idade (recusado) e uma verificação pendente, para demonstrar os bloqueios
+  s.clientes[7].nascimento = somarDias(h, -(16 * 365 + 30));
+  s.clientes[7].verificacao = { status: 'recusado', fonte: 'manual', ts: Date.now() - 10 * DIA, obs: 'Menor de 18 anos' };
+  s.clientes[10].verificacao = { status: 'pendente', fonte: '', ts: 0, obs: '' };
+  const adultos = s.clientes.filter((c) => c.verificacao.status === 'aprovado');
   const credita = (c, valor, tipo, descricao, ts, ref = null) => {
     c.saldo = arred(c.saldo + valor);
     s.carteira.push({ id: uid('w'), ts, clienteId: c.id, tipo, valor: arred(valor), saldoApos: c.saldo, descricao, ref });
   };
   // Primeiro cliente com dados fáceis para testar
-  s.clientes[0].cpf = '11122233344';
+  s.clientes[0].cpf = '11122233396';
   s.clientes[0].telefone = '82999990000';
 
   s.cupons = [
@@ -662,8 +782,10 @@ function semente() {
     }
     const total = arred(subtotal - desconto);
     const venda = { id: uid('v'), numero: ++s.seq.venda, ts: v.ts, lojaId: v.lojaId, canal: rnd() < 0.7 ? 'totem' : 'celular', itens: linhas, subtotal, desconto, cupom, total, pagamento, autorizacao: null, clienteId: null, status: 'ok' };
+    const temRestrito = linhas.some((l) => s.produtos.find((x) => x.id === l.produtoId).restrito18);
+    if (temRestrito) venda.clienteId = adultos[int(0, adultos.length - 1)].id;
     if (pagamento === 'saldo') {
-      const c = s.clientes[int(0, s.clientes.length - 1)];
+      const c = temRestrito ? cliente0(venda.clienteId) : s.clientes[int(0, s.clientes.length - 1)];
       if (c.saldo < total) credita(c, [50, 100, 100, 200][int(0, 3)], 'recarga', 'Recarga (cartão)', v.ts - 3600e3);
       if (c.saldo < total) credita(c, 100, 'recarga', 'Recarga (cartão)', v.ts - 3500e3);
       credita(c, -total, 'compra', `Compra nº ${venda.numero} – ${s.lojas.find((l) => l.id === v.lojaId).nome}`, v.ts, venda.id);
@@ -671,5 +793,22 @@ function semente() {
     }
     s.vendas.push(venda);
   }
+
+  // Geladeiras com trava e histórico de aberturas
+  s.geladeiras = [
+    { id: 'g1', lojaId: 'loja1', nome: 'Geladeira de bebidas', apenasMaiores: true, ativa: true, trava: { modo: 'simulada', webhookUrl: '', ponteId: 'g1', segundos: 8 } },
+    { id: 'g2', lojaId: 'loja3', nome: 'Geladeira de cervejas', apenasMaiores: true, ativa: true, trava: { modo: 'simulada', webhookUrl: '', ponteId: 'g2', segundos: 8 } },
+  ];
+  for (let d = 14; d >= 0; d--) {
+    for (let k = int(1, 5); k > 0; k--) {
+      const g = s.geladeiras[int(0, 1)];
+      const ts = inicioDoDia() - d * DIA + int(17, 22) * 3600e3 + int(0, 3599) * 1e3;
+      if (ts > Date.now()) continue;
+      const negado = rnd() < 0.12;
+      const c = negado ? s.clientes[rnd() < 0.5 ? 7 : 10] : adultos[int(0, adultos.length - 1)];
+      s.acessos.push({ id: uid('a'), ts, geladeiraId: g.id, lojaId: g.lojaId, clienteId: c.id, canal: rnd() < 0.6 ? 'totem' : 'celular', ok: !negado, motivo: negado ? (c.verificacao.status === 'recusado' ? 'Menor de 18 anos' : 'Idade não verificada') : 'Destravada' });
+    }
+  }
+  s.acessos.sort((a, b) => a.ts - b.ts);
   return s;
 }
