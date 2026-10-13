@@ -1,6 +1,6 @@
 // Service worker: rede primeiro, cache como reserva (o totem continua abrindo se a internet cair).
-const CACHE = 'mdb-v3';
-const BASE = ['./', './index.html', './css/app.css', './js/app.js', './js/db.js', './js/ui.js', './js/sessao.js', './js/scanner.js', './js/checkout.js', './js/geladeira.js', './js/cliente.js', './js/admin.js', './js/sped.js', './icon.svg', './manifest.webmanifest'];
+const CACHE = 'mdb-v4';
+const BASE = ['./', './index.html', './css/app.css', './js/app.js', './js/db.js', './js/ui.js', './js/sessao.js', './js/scanner.js', './js/checkout.js', './js/geladeira.js', './js/cliente.js', './js/admin.js', './js/sped.js', './js/arquivo.js', './js/ponte.js', './icon.svg', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(BASE)).then(() => self.skipWaiting()));

@@ -109,10 +109,12 @@ export function lerXml(texto, nome = '') {
 }
 
 // ---------- Geração da EFD ----------
-const cfopEntrada = (cfop) => {
+const CFOP_ST = ['5401', '5402', '5403', '5405', '6401', '6403', '6404'];
+const cfopEntrada = (cfop, usoConsumo = false) => {
   const c = so(cfop);
   const uf = c[0] === '6' ? '2' : c[0] === '7' ? '3' : '1';
-  if (['5401', '5402', '5403', '5405', '6401', '6403', '6404'].includes(c)) return uf + '403';
+  if (usoConsumo) return uf + (CFOP_ST.includes(c) ? '407' : '556');
+  if (CFOP_ST.includes(c)) return uf + '403';
   if (['5910', '6910'].includes(c)) return uf + '910';
   if (['5911', '6911'].includes(c)) return uf + '911';
   if (['5949', '6949'].includes(c)) return uf + '949';
@@ -125,7 +127,7 @@ const cfopEntrada = (cfop) => {
  * @param {object} p.contador   { nome, cpf, crc, cnpj, cep, end, num, compl, bairro, fone, email, codMun }
  * @param {string} p.ini        data inicial (aaaa-mm-dd)
  * @param {string} p.fim        data final (aaaa-mm-dd)
- * @param {object[]} p.docs     resultado de lerXml()
+ * @param {object[]} p.docs     resultado de lerXml(); em NF-e de compra, `usoConsumo` (Set de nItem) marca itens de uso e consumo
  * @param {object|null} p.inventario { data, itens: [{ cod, descr, ean, unid, ncm, cest, qtd, vlUnit }] }
  * @param {object} p.opcoes     { perfil, finalidade, mapaCsosn, contaEstoque, nomeContaEstoque }
  */
@@ -175,21 +177,25 @@ export function gerarEfd({ est, contador, ini, fim, docs, inventario = null, opc
   const inutilizadas = docs.filter((d) => d.tipo === 'inutilizacao' && so(d.cnpj) === cnpj && d.modelo === '65' && (!d.data || noPeriodo(d.data)));
   const ordem = (a, b) => a.data.localeCompare(b.data) || +a.serie - +b.serie || +a.numero - +b.numero;
   saidas.sort(ordem);
-  entradas.sort(ordem);
+  for (const d of entradas.filter((x) => cancelados.has(x.chave))) avisos.push(`NF-e de compra ${d.numero} está cancelada: não escriturada`);
+  const entradasValidas = entradas.filter((x) => !cancelados.has(x.chave)).sort(ordem);
 
   // Cadastros (0150, 0190, 0200)
   const participantes = new Map();
   const unidades = new Map([['UN', 'Unidade']]);
   const itens0200 = new Map();
   const addUnid = (u) => unidades.has(u) || unidades.set(u, `Unidade ${u}`);
-  for (const d of entradas) {
+  for (const d of entradasValidas) {
     const cod = 'F' + so(d.emit.cnpj || d.emit.cpf);
     if (!participantes.has(cod)) participantes.set(cod, d.emit);
     for (const it of d.itens) {
       addUnid(it.uCom);
       const codItem = `E${so(d.emit.cnpj).slice(0, 8)}-${limpa(it.cProd).slice(0, 40)}`;
       it.codItem = codItem;
-      if (!itens0200.has(codItem)) itens0200.set(codItem, { descr: it.xProd, ean: it.cEAN, unid: it.uCom, ncm: it.ncm, cest: it.cest });
+      it.uso = !!d.usoConsumo?.has(it.nItem);
+      const ja = itens0200.get(codItem);
+      if (!ja) itens0200.set(codItem, { descr: it.xProd, ean: it.cEAN, unid: it.uCom, ncm: it.ncm, cest: it.cest, tipo: it.uso ? '07' : '00' });
+      else if (it.uso) ja.tipo = '07';
     }
   }
   const inv = inventario?.itens?.filter((i) => i.qtd > 0) || [];
@@ -213,7 +219,7 @@ export function gerarEfd({ est, contador, ini, fim, docs, inventario = null, opc
   for (const [cod, p] of participantes)
     reg('0150', cod, p.nome, '01058', so(p.cnpj), p.cnpj ? '' : so(p.cpf), so(p.ie) === '' || /ISENTO/i.test(p.ie) ? '' : so(p.ie), so(p.end.cMun), '', p.end.lgr, p.end.nro, p.end.cpl, p.end.bairro);
   for (const [u, d] of unidades) reg('0190', u, d);
-  for (const [cod, i] of itens0200) reg('0200', cod, i.descr, i.ean, '', i.unid, '00', i.ncm, '', /^\d{8}$/.test(i.ncm) ? i.ncm.slice(0, 2) : '', '', '', i.cest);
+  for (const [cod, i] of itens0200) reg('0200', cod, i.descr, i.ean, '', i.unid, i.tipo || '00', i.ncm, '', /^\d{8}$/.test(i.ncm) ? i.ncm.slice(0, 2) : '', '', '', i.cest);
   const conta = inv.length && opcoes.contaEstoque ? opcoes.contaEstoque : '';
   if (conta) reg('0500', dataEfd(ini), '01', 'A', String(conta.split('.').length), conta, opcoes.nomeContaEstoque || 'Estoque de mercadorias para revenda');
   reg('0990', contar(b));
@@ -224,7 +230,7 @@ export function gerarEfd({ est, contador, ini, fim, docs, inventario = null, opc
 
   // ---------- Bloco C ----------
   b = inicioBloco();
-  const temC = saidas.length || entradas.length || inutilizadas.length;
+  const temC = saidas.length || entradasValidas.length || inutilizadas.length;
   reg('C001', temC ? '0' : '1');
   const resumo = { nfce: 0, nfceCanceladas: 0, nfceInutilizadas: 0, vendas: 0, entradas: 0, compras: 0, itensInventario: inv.length, valorInventario: 0 };
 
@@ -258,12 +264,7 @@ export function gerarEfd({ est, contador, ini, fim, docs, inventario = null, opc
       resumo.nfceInutilizadas++;
     }
 
-  for (const d of entradas) {
-    const cancelada = cancelados.has(d.chave);
-    if (cancelada) {
-      avisos.push(`NF-e de compra ${d.numero} está cancelada: não escriturada`);
-      continue;
-    }
+  for (const d of entradasValidas) {
     const tt = d.tot;
     const codPart = 'F' + so(d.emit.cnpj || d.emit.cpf);
     // Simples Nacional: sem direito a crédito, então ICMS, ICMS-ST e IPI ficam sem valor nas entradas.
@@ -271,7 +272,7 @@ export function gerarEfd({ est, contador, ini, fim, docs, inventario = null, opc
     const grupos = new Map();
     for (const it of d.itens) {
       const cst = cstDe(it);
-      const cfop = cfopEntrada(it.cfop);
+      const cfop = cfopEntrada(it.cfop, it.uso);
       reg('C170', String(it.nItem), it.codItem, '', nd(it.qCom, 5), it.uCom, n2(it.vProd), n2(it.vDesc), '0', cst, cfop, '', '0,00', '0,00', '0,00', '0,00', '0,00', '0,00', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '');
       const k = `${cst}|${cfop}`;
       grupos.set(k, arred((grupos.get(k) || 0) + it.vProd - it.vDesc + it.vFrete + it.vSeg + it.vOutro + it.vST + it.vIPI));

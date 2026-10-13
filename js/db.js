@@ -98,6 +98,8 @@ function migrar(s) {
   });
   s.config.fiscal ||= fiscalPadrao();
   s.inventarios ||= [];
+  s.notasEntrada ||= [];
+  s.depara ||= {};
   s.versao = 2;
 }
 function gravar() {
@@ -636,6 +638,129 @@ export function registrarInventario(estabelecimentoId, data) {
   return inv;
 }
 
+// ---------- Notas de entrada (compras) ----------
+// Os XMLs ficam no IndexedDB (arquivo.js). Aqui ficam o resumo, o status e o lançamento no estoque.
+export const notaEntrada = (chave) => S.notasEntrada.find((n) => n.chave === chave);
+export function chaveValida(ch) {
+  const c = digitos(ch);
+  if (c.length !== 44) return false;
+  let soma = 0;
+  let peso = 2;
+  for (let i = 42; i >= 0; i--) {
+    soma += +c[i] * peso;
+    peso = peso === 9 ? 2 : peso + 1;
+  }
+  const dv = 11 - (soma % 11);
+  return (dv >= 10 ? 0 : dv) === +c[43];
+}
+export function registrarNotaEntrada(doc, origem = 'xml') {
+  if (notaEntrada(doc.chave)) return { duplicada: true };
+  const cnpjs = S.config.fiscal.estabelecimentos.map((e) => e.cnpj);
+  const n = {
+    chave: doc.chave,
+    numero: doc.numero,
+    serie: doc.serie,
+    data: doc.data,
+    fornecedor: { cnpj: doc.emit.cnpj || doc.emit.cpf, nome: doc.emit.nome },
+    destCnpj: doc.dest?.cnpj || '',
+    valor: doc.tot.vNF,
+    qtdItens: doc.itens.length,
+    autorizada: !doc.cStat || ['100', '150'].includes(doc.cStat),
+    foraDoCnpj: cnpjs.length > 0 && !cnpjs.includes(digitos(doc.dest?.cnpj)),
+    status: 'pendente',
+    origem,
+    importada: Date.now(),
+  };
+  S.notasEntrada.push(n);
+  salvar();
+  return { nota: n };
+}
+export function cancelarNotaEntrada(chave) {
+  const n = notaEntrada(chave);
+  if (!n) return null;
+  const jaLancada = n.status === 'lancada';
+  n.status = 'cancelada';
+  salvar();
+  return { jaLancada };
+}
+export function excluirNotaEntrada(chave) {
+  const n = notaEntrada(chave);
+  if (n?.status === 'lancada') throw new Error('Nota já lançada no estoque: estorne o lançamento antes');
+  S.notasEntrada = S.notasEntrada.filter((x) => x.chave !== chave);
+  salvar();
+}
+export const deParaDe = (cnpjFornecedor, cProd) => S.depara[`${digitos(cnpjFornecedor)}|${cProd}`];
+
+/**
+ * Lança a nota no estoque.
+ * itens: [{ nItem, cProd, produtoId | 'novo', novo: {nome, ean, ncm, preco}, fator, qtd (já convertida), custoUnit, validade }]
+ * opcoes: { lojaId, custo: 'ultimo' | 'medio' | 'manter' }
+ */
+export function lancarNotaEntrada(chave, itens, { lojaId, custo = 'medio' }) {
+  const n = notaEntrada(chave);
+  if (!n) throw new Error('Nota não encontrada');
+  if (n.status !== 'pendente') throw new Error(n.status === 'lancada' ? 'Esta nota já foi lançada' : 'Nota cancelada não pode ser lançada');
+  if (!loja(lojaId)) throw new Error('Escolha onde a mercadoria vai entrar');
+  const usados = itens.filter((i) => i.produtoId);
+  if (!usados.length) throw new Error('Ligue pelo menos um item a um produto');
+  for (const i of usados) if (!(i.qtd > 0) || !Number.isInteger(i.qtd)) throw new Error(`Item ${i.nItem}: a quantidade em unidades do produto deve ser um número inteiro (ajuste o fator)`);
+  const lancados = [];
+  for (const i of usados) {
+    let p;
+    if (i.produtoId === 'novo') {
+      const ean = digitos(i.novo.ean);
+      p = {
+        id: uid('p'),
+        nome: i.novo.nome,
+        ean: ean && !S.produtos.some((x) => x.ean === ean) ? ean : '',
+        categoria: 'A classificar',
+        preco: arred(i.novo.preco),
+        custo: arred(i.custoUnit),
+        minimo: 2,
+        emoji: '📦',
+        ativo: true,
+        restrito18: false,
+        ncm: digitos(i.novo.ncm).slice(0, 8),
+        cest: digitos(i.novo.cest).slice(0, 7),
+        unid: 'UN',
+        origem: '0',
+      };
+      S.produtos.push(p);
+      if (!S.categorias.includes(p.categoria)) S.categorias.push(p.categoria);
+    } else {
+      p = produto(i.produtoId);
+      if (!p) throw new Error(`Item ${i.nItem}: produto não encontrado`);
+      const total = estoqueTotal(p.id);
+      if (custo === 'ultimo') p.custo = arred(i.custoUnit);
+      else if (custo === 'medio') p.custo = arred(total > 0 ? (total * p.custo + i.qtd * i.custoUnit) / (total + i.qtd) : i.custoUnit);
+      if (!p.ncm && i.novo?.ncm) p.ncm = digitos(i.novo.ncm).slice(0, 8);
+    }
+    addLote(p.id, lojaId, i.qtd, i.validade || null);
+    mov('entrada', p.id, lojaId, i.qtd, { validade: i.validade || null, obs: `NF ${n.numero} · ${n.fornecedor.nome}`, ref: chave });
+    S.depara[`${digitos(n.fornecedor.cnpj)}|${i.cProd}`] = { produtoId: p.id, fator: i.fator };
+    lancados.push({ nItem: i.nItem, produtoId: p.id, qtd: i.qtd, custo: arred(i.custoUnit), validade: i.validade || null });
+  }
+  n.status = 'lancada';
+  n.lancamento = { ts: Date.now(), lojaId, itens: lancados };
+  salvar();
+  return n;
+}
+// Desfaz o lançamento: tira do estoque o que entrou (se ainda houver) e volta a nota para pendente.
+export function estornarLancamento(chave) {
+  const n = notaEntrada(chave);
+  if (!n?.lancamento) throw new Error('Nota sem lançamento');
+  for (const i of n.lancamento.itens) {
+    const disp = estoque(i.produtoId, n.lancamento.lojaId);
+    const q = Math.min(disp, i.qtd);
+    if (q > 0) retirar(i.produtoId, n.lancamento.lojaId, q);
+    mov('ajuste', i.produtoId, n.lancamento.lojaId, -q, { obs: `Estorno da NF ${n.numero}`, ref: chave });
+  }
+  n.status = n.status === 'cancelada' ? 'cancelada' : 'pendente';
+  n.estornado = Date.now();
+  delete n.lancamento;
+  salvar();
+}
+
 // ---------- Dados de demonstração ----------
 function digitoEan(d12) {
   let s = 0;
@@ -658,6 +783,8 @@ function estrutura(config) {
       fiscal: fiscalPadrao(),
     },
     inventarios: [],
+    notasEntrada: [],
+    depara: {},
     geladeiras: [],
     acessos: [],
     lojas: [],

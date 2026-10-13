@@ -10,6 +10,7 @@
 //   POST /verificar   { cpf }               → { ok, maior, nascimento? }
 //   POST /destravar   { geladeira, cpf }    → { ok }   (403 se menor ou não confirmado)
 //   POST /destravar   { geladeira, teste: true } com X-Chave-Admin → aciona sem cliente
+//   POST /nfe/baixar  { chave } com X-Chave-Admin → { ok, xml }  (NF-e de compra pela chave de acesso)
 //
 // Variáveis e segredos: veja ponte/README.md.
 
@@ -26,7 +27,7 @@ export default {
 
     const rota = new URL(req.url).pathname.replace(/\/+$/, '') || '/';
     try {
-      if (rota === '/status') return json({ ok: true, provedor: env.PROVEDOR || 'teste', geladeiras: Object.keys(geladeiras(env)) });
+      if (rota === '/status') return json({ ok: true, provedor: env.PROVEDOR || 'teste', nfe: env.NFE_PROVEDOR || 'não configurado', geladeiras: Object.keys(geladeiras(env)) });
 
       const admin = !!env.CHAVE_ADMIN && igual(req.headers.get('X-Chave-Admin'), env.CHAVE_ADMIN);
       const app = !!env.CHAVE_APP && igual(req.headers.get('X-Chave'), env.CHAVE_APP);
@@ -51,6 +52,12 @@ export default {
         }
         await acionarWebhook(g);
         return json({ ok: true });
+      }
+      if (rota === '/nfe/baixar') {
+        if (!admin) return json({ ok: false, erro: 'O download de notas exige a chave de administrador' }, 403);
+        const chave = String(corpo.chave || '').replace(/\D/g, '');
+        if (!chaveNfeValida(chave)) return json({ ok: false, erro: 'Chave de acesso inválida' }, 400);
+        return json({ ok: true, xml: await baixarNfe(chave, env) });
       }
       return json({ ok: false, erro: 'Rota não encontrada' }, 404);
     } catch (e) {
@@ -185,4 +192,50 @@ async function acionarWebhook(g) {
   if (!g.webhook) throw erro('Webhook da geladeira não configurado', 500);
   const r = await fetch(g.webhook, { method: g.metodo || 'GET' });
   if (!r.ok) throw erro(`eWeLink respondeu ${r.status}`, 502);
+}
+
+// ---------- NF-e de compra pela chave ----------
+// A SEFAZ só libera o XML completo ao destinatário depois da "ciência da operação" (evento 210210),
+// assinada com o certificado A1 da empresa. O provedor guarda o certificado e faz isso por nós.
+export function chaveNfeValida(c) {
+  if (!/^\d{44}$/.test(c)) return false;
+  let soma = 0;
+  let peso = 2;
+  for (let i = 42; i >= 0; i--) {
+    soma += +c[i] * peso;
+    peso = peso === 9 ? 2 : peso + 1;
+  }
+  const dv = 11 - (soma % 11);
+  return (dv >= 10 ? 0 : dv) === +c[43];
+}
+
+async function baixarNfe(chave, env) {
+  const prov = env.NFE_PROVEDOR || '';
+  let xml;
+  if (prov === 'focus') {
+    // Focus NFe (doc.focusnfe.com.br): o certificado A1 é cadastrado no painel deles.
+    const base = (env.FOCUS_URL || 'https://api.focusnfe.com.br').replace(/\/+$/, '');
+    const auth = 'Basic ' + btoa(`${env.FOCUS_TOKEN || ''}:`);
+    // Ciência da operação: se já foi feita, o provedor recusa e seguimos para o download.
+    await fetch(`${base}/v2/nfes_recebidas/${chave}/manifesto`, {
+      method: 'POST',
+      headers: { Authorization: auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tipo: 'ciencia' }),
+    }).catch(() => null);
+    const r = await fetch(`${base}/v2/nfes_recebidas/${chave}.xml`, { headers: { Authorization: auth } });
+    if (r.status === 404) throw erro('A nota ainda não está disponível no provedor. Tente de novo em alguns minutos.', 404);
+    if (r.status === 401 || r.status === 403) throw erro('Token do provedor de NF-e inválido', 502);
+    if (!r.ok) throw erro(`Provedor de NF-e respondeu ${r.status}`, 502);
+    xml = await r.text();
+  } else if (prov === 'http') {
+    // Qualquer serviço que devolva o XML: NFE_URL com {chave}; NFE_TOKEN vai no cabeçalho Authorization.
+    const url = String(env.NFE_URL || '').replace('{chave}', chave);
+    if (!url) throw erro('NFE_URL não configurado', 500);
+    const r = await fetch(url, { headers: env.NFE_TOKEN ? { Authorization: env.NFE_TOKEN } : {} });
+    if (r.status === 404) throw erro('Nota não encontrada no provedor', 404);
+    if (!r.ok) throw erro(`Provedor de NF-e respondeu ${r.status}`, 502);
+    xml = await r.text();
+  } else throw erro('Download pela chave não configurado na ponte (defina NFE_PROVEDOR)', 501);
+  if (!/<(nfeProc|NFe)[\s>]/.test(xml) || !xml.includes(chave)) throw erro('O provedor devolveu só o resumo da nota, não o XML completo. Aguarde a ciência ser processada e tente de novo.', 502);
+  return xml;
 }

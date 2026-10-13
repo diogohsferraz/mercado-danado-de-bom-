@@ -9,31 +9,7 @@
 import * as D from './db.js';
 import { digitos } from './ui.js';
 
-const ponte = () => {
-  const { ponteUrl, ponteChave, ponteChaveAdmin } = D.cfg().idade;
-  if (!ponteUrl) throw new Error('A ponte não está configurada (Administração → Configurações)');
-  return { url: ponteUrl.replace(/\/+$/, ''), chave: ponteChave, chaveAdmin: ponteChaveAdmin };
-};
-
-async function chamarPonte(rota, corpo, { admin = false } = {}) {
-  const p = ponte();
-  const headers = { 'Content-Type': 'application/json' };
-  if (admin && p.chaveAdmin) headers['X-Chave-Admin'] = p.chaveAdmin;
-  else headers['X-Chave'] = p.chave;
-  let r;
-  try {
-    r = await fetch(p.url + rota, { method: corpo ? 'POST' : 'GET', headers, body: corpo ? JSON.stringify(corpo) : undefined });
-  } catch {
-    throw new Error('Sem conexão com a ponte. Verifique a internet e o endereço configurado.');
-  }
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok || j.ok === false) {
-    const e = new Error(j.erro || `A ponte respondeu com erro ${r.status}`);
-    e.status = r.status;
-    throw e;
-  }
-  return j;
-}
+import { chamarPonte } from './ponte.js';
 
 export const statusPonte = () => chamarPonte('/status');
 

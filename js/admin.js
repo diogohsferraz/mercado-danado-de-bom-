@@ -4,12 +4,16 @@ import * as Sess from './sessao.js';
 import * as G from './geladeira.js';
 import { $, $$, esc, brl, num, pct, toast, modal, confirmar, lerForm, baixar, csv, grafBarras, barraHoriz, logoSVG, fmtData, fmtDataHora, fmtIso, qrcode } from './ui.js';
 import * as SP from './sped.js';
+import * as ARQ from './arquivo.js';
+import { chamarPonte } from './ponte.js';
+import { abrirCamera } from './scanner.js';
 
 const DIA = 864e5;
 const SECOES = [
   ['painel', '📊', 'Painel'],
   ['vendas', '💰', 'Vendas e relatórios'],
   ['produtos', '🏷️', 'Produtos'],
+  ['entradas', '📥', 'Notas de entrada'],
   ['estoque', '📦', 'Estoque'],
   ['validade', '⏰', 'Validade'],
   ['reposicao', '🚚', 'Reposição'],
@@ -26,7 +30,7 @@ const TIPO_MOV = { entrada: 'Entrada', venda: 'Venda', perda: 'Perda', ajuste: '
 
 // Filtros lembrados durante a sessão
 const F = (() => {
-  const padrao = { periodo: '30', de: '', ate: '', lojaVendas: '', busca: '', cat: '', estLoja: 'loja1', soBaixo: false, valLoja: '', valJanela: '7', repLoja: 'loja1', repOrigem: 'dep', cliBusca: '', cliVerif: '', gelLoja: '' };
+  const padrao = { periodo: '30', de: '', ate: '', lojaVendas: '', busca: '', cat: '', estLoja: 'loja1', soBaixo: false, valLoja: '', valJanela: '7', repLoja: 'loja1', repOrigem: 'dep', cliBusca: '', cliVerif: '', gelLoja: '', entMes: '', entStatus: '' };
   try {
     return { ...padrao, ...JSON.parse(sessionStorage.getItem('mddb:filtros') || '{}') };
   } catch {
@@ -101,7 +105,7 @@ function telaLogin(root, secao) {
 
 // ---------- Utilidades ----------
 const pendentesIdade = () => D.db().clientes.filter((c) => c.verificacao?.status === 'pendente' && D.cpfValido(c.cpf)).length;
-const contador = (id, al) => (id === 'reposicao' ? al.baixo.length : id === 'validade' ? al.vencidos.length + al.vencendo.length : id === 'clientes' ? pendentesIdade() : 0);
+const contador = (id, al) => (id === 'reposicao' ? al.baixo.length : id === 'validade' ? al.vencidos.length + al.vencendo.length : id === 'clientes' ? pendentesIdade() : id === 'entradas' ? D.db().notasEntrada.filter((n) => n.status === 'pendente').length : 0);
 const FONTE = { manual: 'documento conferido', ponte: 'consulta automática' };
 function badgeIdade(c) {
   const v = c.verificacao?.status;
@@ -403,6 +407,97 @@ const VIEWS = {
           )
           .join('')}</tbody></table></div>`;
       $$('[data-ed]', c).forEach((b) => (b.onclick = () => formProduto(D.produto(b.dataset.ed))));
+    };
+    desenhar();
+    return desenhar;
+  },
+
+  // ---------- Notas de entrada ----------
+  entradas(main) {
+    main.innerHTML =
+      cab('Notas de entrada', '<button class="btn ghost" data-a="zip">⬇ XMLs do mês (.zip)</button><button class="btn ghost" data-a="chave">🔎 Baixar pela chave</button><label class="btn primary">⬆ Importar XML/ZIP<input type="file" multiple accept=".xml,.zip,application/xml,text/xml,application/zip" data-a="importar" hidden></label>') +
+      `<div class="filtros"><input type="month" name="entMes" value="${esc(F.entMes)}" aria-label="Mês"><select name="entStatus" aria-label="Situação">${[['', 'Todas as situações'], ['pendente', 'A lançar no estoque'], ['lancada', 'Lançadas'], ['cancelada', 'Canceladas']].map(([v, t]) => `<option value="${v}" ${F.entStatus === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div><div data-c></div>`;
+    const c = $('[data-c]', main);
+    $('.filtros', main).addEventListener('change', (e) => {
+      F[e.target.name] = e.target.value;
+      lembrar();
+      desenhar();
+    });
+    $('[data-a=importar]', main).addEventListener('change', async (e) => {
+      const arqs = [...e.target.files];
+      e.target.value = '';
+      if (!arqs.length) return;
+      try {
+        const docs = await lerArquivosXml(arqs, { comTexto: true });
+        const r = await importarNotas(docs, 'xml');
+        toast(resumoImportacao(r), r.novas ? 'ok' : 'info', 6000);
+      } catch (err) {
+        toast(err.message, 'erro', 5000);
+      }
+    });
+    $('[data-a=chave]', main).onclick = () => baixarPelaChave();
+    $('[data-a=zip]', main).onclick = async () => {
+      const lista = filtradas();
+      if (!lista.length) return toast('Nenhuma nota no filtro atual', 'erro');
+      const arquivos = [];
+      for (const n of lista) {
+        const xml = await ARQ.lerXmlGuardado(n.chave);
+        if (xml) arquivos.push({ nome: `${n.chave}-nfe.xml`, texto: xml });
+      }
+      baixar(`notas_entrada_${F.entMes || 'todas'}.zip`, ARQ.criarZip(arquivos));
+    };
+    const filtradas = () =>
+      D.db()
+        .notasEntrada.filter((n) => (!F.entMes || n.data.startsWith(F.entMes)) && (!F.entStatus || n.status === F.entStatus))
+        .sort((a, b) => b.data.localeCompare(a.data) || b.importada - a.importada);
+    const desenhar = () => {
+      const lista = filtradas();
+      const pend = D.db().notasEntrada.filter((n) => n.status === 'pendente');
+      const soma = (l) => l.reduce((a, n) => a + n.valor, 0);
+      const ativas = lista.filter((n) => n.status !== 'cancelada');
+      c.innerHTML = `
+        <div class="kpis">
+          ${kpi('A lançar no estoque', num(pend.length), brl(soma(pend)), pend.length ? 'destaque' : '')}
+          ${kpi('Notas no filtro', num(ativas.length), brl(soma(ativas)))}
+          ${kpi('Fornecedores', num(new Set(ativas.map((n) => n.fornecedor.cnpj)).size))}
+          ${kpi('XMLs guardados', num(D.db().notasEntrada.length), 'entram sozinhos no SPED do mês')}
+        </div>
+        <div class="tabela-wrap"><table class="tabela"><thead><tr><th>Emissão</th><th>Nota</th><th>Fornecedor</th><th class="n">Itens</th><th class="n">Valor</th><th>Situação</th><th class="n">Ações</th></tr></thead><tbody>${
+          lista
+            .map((n) => {
+              const sit = n.status === 'lancada' ? `<span class="badge verde">lançada</span><br><small class="muted">${esc(D.loja(n.lancamento?.lojaId)?.nome || '')}</small>` : n.status === 'cancelada' ? `<span class="badge vermelho">cancelada</span>${n.lancamento ? '<br><small class="txt-alerta">estoque já lançado</small>' : ''}` : '<span class="badge amarelo">a lançar</span>';
+              const alertas = `${n.autorizada ? '' : ' <span class="badge vermelho" title="Sem protocolo de autorização no XML">sem autorização</span>'}${n.foraDoCnpj ? ' <span class="badge laranja" title="Destinatário não é um CNPJ cadastrado em Fiscal">outro CNPJ</span>' : ''}`;
+              return `<tr><td>${fmtIso(n.data)}</td><td><b>${esc(n.numero)}</b>/${esc(n.serie)}${alertas}<br><small class="mono muted">${esc(n.chave)}</small></td><td>${esc(n.fornecedor.nome)}<br><small class="mono muted">${esc(n.fornecedor.cnpj)}</small></td><td class="n">${n.qtdItens}</td><td class="n"><b>${brl(n.valor)}</b></td><td>${sit}</td>
+                <td class="n nowrap">${n.status === 'pendente' ? `<button class="btn mini primary" data-lancar="${n.chave}">Lançar</button>` : ''}<button class="btn mini ghost" data-ver="${n.chave}">Ver</button><button class="btn mini ghost" data-xml="${n.chave}">XML</button>${n.lancamento ? `<button class="btn mini ghost" data-estornar="${n.chave}">Estornar</button>` : ''}${n.status !== 'lancada' && !n.lancamento ? `<button class="btn mini ghost" data-excluir="${n.chave}" title="Excluir">✕</button>` : ''}</td></tr>`;
+            })
+            .join('') || '<tr><td colspan="7" class="muted">Nenhuma nota. Importe os XMLs que os fornecedores enviam por e-mail ou baixe pela chave de acesso.</td></tr>'
+        }</tbody></table></div>`;
+      $$('[data-lancar]', c).forEach((b) => (b.onclick = () => lancarNota(b.dataset.lancar)));
+      $$('[data-ver]', c).forEach((b) => (b.onclick = () => verNota(b.dataset.ver)));
+      $$('[data-xml]', c).forEach(
+        (b) =>
+          (b.onclick = async () => {
+            const xml = await ARQ.lerXmlGuardado(b.dataset.xml);
+            xml ? baixar(`${b.dataset.xml}-nfe.xml`, xml, 'application/xml') : toast('XML não encontrado neste aparelho', 'erro');
+          }),
+      );
+      $$('[data-estornar]', c).forEach(
+        (b) =>
+          (b.onclick = async () => {
+            if (!(await confirmar('Estornar o lançamento? As quantidades que entraram saem do estoque (o custo dos produtos não volta ao anterior).', { ok: 'Estornar', perigo: true }))) return;
+            D.estornarLancamento(b.dataset.estornar);
+            toast('Lançamento estornado', 'ok');
+          }),
+      );
+      $$('[data-excluir]', c).forEach(
+        (b) =>
+          (b.onclick = async () => {
+            if (!(await confirmar('Excluir esta nota e o XML guardado?', { ok: 'Excluir', perigo: true }))) return;
+            D.excluirNotaEntrada(b.dataset.excluir);
+            await ARQ.apagarXml(b.dataset.excluir);
+            toast('Nota excluída', 'ok');
+          }),
+      );
     };
     desenhar();
     return desenhar;
@@ -844,7 +939,8 @@ const VIEWS = {
             </div>
             <label>Inventário a incluir<select name="inv"><option value="">Nenhum (Bloco H sem movimento)</option>${invs.map((i) => `<option value="${i.id}">${fmtIso(i.data)} · ${esc(ests.find((e) => e.id === i.estabelecimentoId)?.razao || '')}</option>`).join('')}</select></label>
             <div class="lado"><label>Conta contábil do estoque (COD_CTA, opcional)<input name="contaEstoque" value="${esc(f.contaEstoque || '')}" placeholder="ex.: 1.1.4.01"></label></div>
-            <label class="arquivos">XMLs do mês: NFC-e de venda, cancelamentos, inutilizações e NF-e de compra (.xml ou .zip)<input type="file" name="xmls" multiple accept=".xml,.zip,application/xml,text/xml,application/zip" required></label>
+            <label class="arquivos">XMLs de venda do mês: NFC-e, cancelamentos e inutilizações (.xml ou .zip)<input type="file" name="xmls" multiple accept=".xml,.zip,application/xml,text/xml,application/zip"></label>
+            <p class="muted small">📥 As notas de compra guardadas em <a href="#/admin/entradas">Notas de entrada</a> entram automaticamente (${D.db().notasEntrada.length} guardadas).</p>
             <details><summary>Correspondência CSOSN → CST usada na EFD (revise com o contador)</summary>
               <div class="mapa-csosn">${Object.entries({ ...SP.MAPA_CSOSN_PADRAO, ...(f.mapaCsosn || {}) })
                 .map(([k, val]) => `<label>CSOSN ${k}<input name="csosn_${k}" value="${esc(val)}" maxlength="2" inputmode="numeric"></label>`)
@@ -883,7 +979,18 @@ const VIEWS = {
           const mapaCsosn = {};
           $$('[name^=csosn_]', fm).forEach((i) => /^\d{2}$/.test(i.value) && (mapaCsosn[i.name.slice(6)] = i.value));
           D.salvarConfig({ fiscal: { ...D.cfg().fiscal, perfil: fm.perfil.value, contaEstoque: fm.contaEstoque.value.trim(), mapaCsosn } });
-          const docs = await lerArquivosXml([...fm.xmls.files]);
+          const docs = fm.xmls.files.length ? await lerArquivosXml([...fm.xmls.files]) : [];
+          for (const n of D.db().notasEntrada.filter((x) => x.data >= ini && x.data <= fim)) {
+            const xml = await ARQ.lerXmlGuardado(n.chave);
+            if (xml) {
+              const d = SP.lerXml(xml, `${n.chave}.xml`);
+              // Itens deixados fora do estoque no lançamento são material de uso e consumo.
+              if (n.lancamento) d.usoConsumo = new Set(d.itens.map((i) => i.nItem).filter((k) => !n.lancamento.itens.some((x) => x.nItem === k)));
+              docs.push(d);
+            }
+            if (n.status === 'cancelada') docs.push({ tipo: 'cancelamento', chave: n.chave });
+          }
+          if (!docs.length) throw new Error('Carregue os XMLs das NFC-e de venda do mês');
           const invSel = D.db().inventarios.find((i) => i.id === fm.inv.value);
           const inventario = invSel && {
             data: invSel.data,
@@ -1350,15 +1457,189 @@ function formGeladeira(g = null) {
   mostrar();
 }
 
-async function lerArquivosXml(arquivos) {
+async function lerArquivosXml(arquivos, { comTexto = false } = {}) {
   const docs = [];
+  const add = (texto, nome) => {
+    const d = SP.lerXml(texto, nome);
+    if (comTexto) d.texto = texto;
+    docs.push(d);
+  };
   for (const a of arquivos) {
     if (/\.zip$/i.test(a.name)) {
-      for (const ent of await SP.lerZip(a)) if (/\.xml$/i.test(ent.nome)) docs.push(SP.lerXml(ent.texto, ent.nome));
-    } else docs.push(SP.lerXml(await a.text(), a.name));
+      for (const ent of await SP.lerZip(a)) if (/\.xml$/i.test(ent.nome)) add(ent.texto, ent.nome);
+    } else add(await a.text(), a.name);
   }
   if (!docs.length) throw new Error('Nenhum XML encontrado nos arquivos enviados');
   return docs;
+}
+
+// ---------- Notas de entrada: importação, download e lançamento ----------
+async function importarNotas(docs, origem) {
+  const r = { novas: 0, duplicadas: 0, canceladas: 0, ignoradas: [], avisos: [] };
+  for (const d of docs) {
+    if (d.tipo === 'nfe' && d.modelo === '55') {
+      if (D.notaEntrada(d.chave)) {
+        r.duplicadas++;
+        continue;
+      }
+      const cnpjs = D.cfg().fiscal.estabelecimentos.map((e) => e.cnpj);
+      if (cnpjs.includes(d.emit.cnpj)) {
+        r.ignoradas.push(`NF ${d.numero}: emitida pela própria empresa (não é entrada)`);
+        continue;
+      }
+      await ARQ.guardarXml(d.chave, d.texto);
+      const { nota } = D.registrarNotaEntrada(d, origem);
+      r.novas++;
+      if (nota.foraDoCnpj) r.avisos.push(`NF ${d.numero}: destinatário ${d.dest?.cnpj || '—'} não é um CNPJ cadastrado`);
+    } else if (d.tipo === 'cancelamento') {
+      const x = D.cancelarNotaEntrada(d.chave);
+      if (x) {
+        r.canceladas++;
+        if (x.jaLancada) r.avisos.push(`NF ${D.notaEntrada(d.chave).numero} foi cancelada pelo fornecedor, mas já tinha entrado no estoque: use "Estornar"`);
+      }
+    } else if (d.tipo === 'nfe' && d.modelo === '65') r.ignoradas.push(`${d.nome}: NFC-e é nota de venda (use em Fiscal e SPED)`);
+    else r.ignoradas.push(`${d.nome}: ${d.motivo || 'não é NF-e'}`);
+  }
+  if (r.avisos.length || r.ignoradas.length)
+    modal({ title: 'Resultado da importação', body: `<p>${esc(resumoImportacao(r))}</p><ul class="lista-avisos">${[...r.avisos, ...r.ignoradas].map((a) => `<li>${esc(a)}</li>`).join('')}</ul>` });
+  return r;
+}
+const resumoImportacao = (r) =>
+  [r.novas && `${r.novas} nota(s) importada(s)`, r.duplicadas && `${r.duplicadas} já existiam`, r.canceladas && `${r.canceladas} cancelamento(s)`, r.ignoradas.length && `${r.ignoradas.length} arquivo(s) ignorado(s)`].filter(Boolean).join(' · ') || 'Nada para importar';
+
+function baixarPelaChave() {
+  const temPonte = !!D.cfg().idade.ponteUrl;
+  const m = modal({
+    title: 'Baixar nota pela chave de acesso',
+    body: `<form class="form-col">
+      <label>Chave de acesso (44 números do DANFE)<input name="chave" inputmode="numeric" maxlength="54" placeholder="2726 1099 8887 7700 0100 5500 3000 0055 0110 0005 5010" required></label>
+      <button type="button" class="btn ghost" data-a="cam">📷 Ler o código de barras do DANFE</button>
+      <p class="small" data-ok></p>
+      ${temPonte ? '<p class="muted small">A ponte registra a "ciência da operação" com o certificado da empresa e baixa o XML completo.</p>' : '<p class="small txt-alerta">Para baixar pela chave, publique a ponte com um provedor de NF-e (veja ponte/README.md) e configure-a em Configurações. Sem ela, importe o XML que o fornecedor enviou.</p>'}
+    </form>`,
+    actions: [
+      { label: 'Fechar' },
+      {
+        label: 'Baixar e importar',
+        cls: 'primary',
+        onClick: async (ctx) => {
+          const ch = ctx.el.querySelector('[name=chave]').value.replace(/\D/g, '');
+          if (!D.chaveValida(ch)) throw new Error('Chave inválida: confira os 44 números');
+          if (ch.slice(20, 22) !== '55') throw new Error('Esta chave não é de NF-e (modelo 55)');
+          if (D.notaEntrada(ch)) throw new Error('Esta nota já está no sistema');
+          const r = await chamarPonte('/nfe/baixar', { chave: ch }, { admin: true });
+          const d = SP.lerXml(r.xml, `${ch}.xml`);
+          if (d.tipo !== 'nfe') throw new Error('O provedor não devolveu o XML completo da nota. Tente de novo em alguns minutos.');
+          d.texto = r.xml;
+          const res = await importarNotas([d], 'chave');
+          toast(resumoImportacao(res), 'ok', 5000);
+        },
+      },
+    ],
+  });
+  const inp = m.el.querySelector('[name=chave]');
+  const conferir = () => {
+    const ch = inp.value.replace(/\D/g, '');
+    m.el.querySelector('[data-ok]').innerHTML = ch.length < 44 ? `${ch.length}/44 números` : D.chaveValida(ch) ? '<span class="txt-ok">✓ chave válida</span>' : '<span class="txt-alerta">dígito verificador não confere</span>';
+  };
+  inp.addEventListener('input', conferir);
+  m.el.querySelector('[data-a=cam]').onclick = () =>
+    abrirCamera(
+      (cod) => {
+        inp.value = cod.replace(/\D/g, '');
+        conferir();
+      },
+      { continuo: false },
+    );
+}
+
+async function verNota(chave) {
+  const n = D.notaEntrada(chave);
+  const xml = await ARQ.lerXmlGuardado(chave);
+  const d = xml && SP.lerXml(xml);
+  modal({
+    title: `NF ${n.numero} · ${n.fornecedor.nome}`,
+    wide: true,
+    body: `<p class="muted small mono">${esc(chave)}</p>
+      <p>Emissão ${fmtIso(n.data)} · ${n.qtdItens} itens · <b>${brl(n.valor)}</b> · origem: ${n.origem === 'chave' ? 'baixada pela chave' : 'XML importado'}</p>
+      ${d?.itens ? `<div class="tabela-wrap"><table class="tabela"><thead><tr><th>#</th><th>Código</th><th>Descrição</th><th>EAN</th><th>NCM</th><th>CFOP</th><th class="n">Qtd</th><th class="n">Valor</th></tr></thead><tbody>${d.itens.map((i) => `<tr><td>${i.nItem}</td><td class="mono">${esc(i.cProd)}</td><td>${esc(i.xProd)}</td><td class="mono">${esc(i.cEAN || '—')}</td><td class="mono">${esc(i.ncm)}</td><td>${esc(i.cfop)}</td><td class="n">${num(i.qCom, 3)} ${esc(i.uCom)}</td><td class="n">${brl(i.vProd)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="txt-alerta">XML não encontrado neste aparelho.</p>'}
+      ${n.lancamento ? `<p class="muted small">Lançada em ${fmtDataHora(n.lancamento.ts)} em ${esc(D.loja(n.lancamento.lojaId)?.nome || '')}: ${n.lancamento.itens.map((i) => `${i.qtd}× ${esc(D.produto(i.produtoId)?.nome || '')}`).join(', ')}</p>` : ''}`,
+  });
+}
+
+async function lancarNota(chave) {
+  const n = D.notaEntrada(chave);
+  const xml = await ARQ.lerXmlGuardado(chave);
+  if (!xml) return toast('XML desta nota não está neste aparelho. Importe-o de novo.', 'erro', 5000);
+  const d = SP.lerXml(xml);
+  const prods = D.produtosAtivos().slice().sort((a, b) => a.nome.localeCompare(b.nome));
+  const dep = D.lojasTodas().find((l) => l.tipo === 'deposito');
+  // Sugestão de produto: de-para já usado com este fornecedor, ou o código de barras
+  const linhas = d.itens.map((i) => {
+    const dp = D.deParaDe(n.fornecedor.cnpj, i.cProd);
+    const porEan = i.cEAN && D.produtoPorEan(i.cEAN);
+    const total = i.vProd - i.vDesc + i.vST + i.vIPI + i.vFrete + i.vSeg + i.vOutro;
+    return { ...i, total, produtoId: dp?.produtoId && D.produto(dp.produtoId) ? dp.produtoId : porEan?.id || '', fator: dp?.fator || 1, sugestao: dp ? 'usado antes' : porEan ? 'código de barras' : '' };
+  });
+  const m = modal({
+    title: `Lançar NF ${n.numero} · ${n.fornecedor.nome}`,
+    wide: true,
+    cls: 'modal-lancar',
+    body: `<form class="form-col">
+      <div class="lado">
+        <label>Entrar em${selLoja('lojaId', dep?.id || D.lojasVenda()[0]?.id)}</label>
+        <label>Custo dos produtos<select name="custo"><option value="medio">Custo médio (recomendado)</option><option value="ultimo">Último custo (o desta nota)</option><option value="manter">Não alterar</option></select></label>
+        <label>Margem para produtos novos (%)<input name="margem" type="number" min="0" max="500" value="40"></label>
+      </div>
+      <p class="muted small">Ligue cada item da nota a um produto da loja. <b>Fator</b> = quantas unidades do produto vêm em 1 ${'unidade da nota'} (ex.: caixa com 12 → 12). O app lembra essa ligação para as próximas notas deste fornecedor.</p>
+      <div class="tabela-wrap"><table class="tabela tab-lanc"><thead><tr><th>Item da nota</th><th>Produto da loja</th><th class="n">Fator</th><th class="n">Entra</th><th class="n">Custo un.</th><th>Validade</th></tr></thead><tbody>${linhas
+        .map(
+          (l, k) => `<tr data-k="${k}"><td><b>${esc(l.xProd)}</b><br><small class="muted">${num(l.qCom, 3)} ${esc(l.uCom)} · ${brl(l.total)}${l.cEAN ? ` · EAN ${esc(l.cEAN)}` : ''}</small></td>
+          <td><select name="p_${k}"><option value="">— não lançar (uso/consumo) —</option><option value="novo">➕ Criar produto novo com este item</option>${prods.map((p) => `<option value="${p.id}" ${p.id === l.produtoId ? 'selected' : ''}>${p.emoji} ${esc(p.nome)}</option>`).join('')}</select>${l.sugestao ? `<small class="muted">sugerido: ${l.sugestao}</small>` : ''}</td>
+          <td class="n"><input class="qtd-in" type="number" name="f_${k}" min="0.001" step="any" value="${l.fator}"></td>
+          <td class="n" data-entra="${k}"></td><td class="n" data-custo="${k}"></td>
+          <td><input type="date" name="v_${k}" class="data-in"></td></tr>`,
+        )
+        .join('')}</tbody></table></div>
+      <p class="small" data-resumo></p>
+    </form>`,
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Lançar no estoque',
+        cls: 'primary',
+        onClick: (ctx) => {
+          const f = ctx.el.querySelector('form');
+          const margem = (+f.margem.value || 0) / 100;
+          const itens = linhas.map((l, k) => {
+            const fator = +f[`f_${k}`].value || 1;
+            const qtd = Math.round(l.qCom * fator * 1000) / 1000;
+            const custoUnit = qtd ? l.total / qtd : 0;
+            return { nItem: l.nItem, cProd: l.cProd, produtoId: f[`p_${k}`].value, fator, qtd, custoUnit, validade: f[`v_${k}`].value, novo: { nome: l.xProd, ean: l.cEAN, ncm: l.ncm, cest: l.cest, preco: Math.ceil(custoUnit * (1 + margem) * 10) / 10 } };
+          });
+          const r = D.lancarNotaEntrada(chave, itens, { lojaId: f.lojaId.value, custo: f.custo.value });
+          toast(`NF ${r.numero} lançada: ${r.lancamento.itens.reduce((a, i) => a + i.qtd, 0)} unidades em ${D.loja(r.lancamento.lojaId).nome}`, 'ok', 5000);
+        },
+      },
+    ],
+  });
+  const f = m.el.querySelector('form');
+  const atualizar = () => {
+    let ok = 0;
+    linhas.forEach((l, k) => {
+      const fator = +f[`f_${k}`].value || 1;
+      const qtd = Math.round(l.qCom * fator * 1000) / 1000;
+      const ligado = f[`p_${k}`].value;
+      const inteiro = Number.isInteger(qtd);
+      m.el.querySelector(`[data-entra="${k}"]`).innerHTML = ligado ? (inteiro ? `<b>${qtd}</b> un.` : `<span class="txt-alerta">${num(qtd, 3)}</span>`) : '—';
+      m.el.querySelector(`[data-custo="${k}"]`).textContent = ligado && qtd ? brl(l.total / qtd) : '—';
+      if (ligado && inteiro) ok++;
+    });
+    m.el.querySelector('[data-resumo]').innerHTML = `${ok} de ${linhas.length} itens prontos para entrar no estoque. Itens sem produto não entram no estoque (ex.: material de uso e consumo).`;
+  };
+  f.addEventListener('input', atualizar);
+  f.addEventListener('change', atualizar);
+  atualizar();
 }
 
 function formEstabelecimento(e = null) {

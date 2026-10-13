@@ -65,6 +65,19 @@ Em `wrangler.toml`, ajuste `ORIGEM` para o endereço do app e `PROVEDOR`. Recome
    - o mesmo identificador usado em `GELADEIRAS`;
    - depois clique em **Testar destravar**.
 
+## 5. (Opcional) Baixar NF-e de compra pela chave de acesso
+
+A SEFAZ não tem download aberto pela chave. O XML completo só é liberado para o destinatário depois da **ciência da operação** (evento 210210), assinada com o **certificado A1 da empresa**, no serviço *Distribuição de DF-e* do Ambiente Nacional. Para não deixar o certificado no navegador, a ponte usa um provedor que guarda o certificado e faz a ciência:
+
+| `NFE_PROVEDOR` | Configuração |
+|---|---|
+| `focus` | Focus NFe (focusnfe.com.br): cadastre o certificado A1 no painel deles e defina o segredo `FOCUS_TOKEN`. A ponte faz a ciência (`POST /v2/nfes_recebidas/{chave}/manifesto`) e baixa o XML (`/v2/nfes_recebidas/{chave}.xml`). Confira os endereços na documentação atual do provedor. |
+| `http` | Qualquer outro serviço (SIEG, Qive/Arquivei, NFE.io etc.): `NFE_URL` com `{chave}` no lugar da chave e `NFE_TOKEN` (vai no cabeçalho Authorization). O serviço deve devolver o XML completo (`nfeProc`); se devolver só o resumo, a ponte recusa e avisa. |
+
+O download exige a **chave de administrador** (`X-Chave-Admin`), porque o totem e o celular não podem baixar notas da empresa.
+
+Sem a ponte, o app continua aceitando o XML que o fornecedor envia por e-mail (Importar XML/ZIP).
+
 ## Privacidade (LGPD)
 
 - O cliente marca uma autorização no cadastro antes de o CPF ser usado na verificação.

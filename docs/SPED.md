@@ -16,7 +16,8 @@ Regras aplicadas:
 
 ## Como usar todo mês
 
-1. Exporte do seu emissor de NFC-e os XMLs do mês: autorizadas, cancelamentos e inutilizações. Junte os XMLs das NF-e de compra dos fornecedores. Pode ser um .zip.
+1. Ao longo do mês, dê entrada nas notas de compra em **Notas de entrada**, importando o XML ou baixando pela chave. Elas ficam guardadas e entram sozinhas no SPED. Itens que você deixa fora do estoque no lançamento vão como **uso e consumo**: tipo 07 e CFOP 1556, ou 1407 com substituição tributária.
+   No fim do mês, exporte do seu emissor de NFC-e os XMLs de venda: autorizadas, cancelamentos e inutilizações. Pode ser um .zip.
 2. Em **Fiscal e SPED → Gerar**, escolha o CNPJ e o mês, carregue os arquivos e clique em **Gerar SPED Fiscal**.
 3. Confira o resumo (quantidade de notas, total vendido, avisos) com o relatório do emissor.
 4. Envie o .txt ao contador. Ele **valida no PVA**, assina com o certificado digital e transmite.
