@@ -1,0 +1,12 @@
+{
+  "name": "Mercado Danado de Bom",
+  "short_name": "Danado de Bom",
+  "description": "Mercado autônomo: totem, compra pelo celular, carteira e gestão multi-loja.",
+  "lang": "pt-BR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#FF6B00",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
