@@ -106,7 +106,7 @@ function telaLogin(root, secao) {
 
 // ---------- Utilidades ----------
 const pendentesIdade = () => D.db().clientes.filter((c) => c.verificacao?.status === 'pendente' && D.cpfValido(c.cpf)).length;
-const contador = (id, al) => (id === 'reposicao' ? al.baixo.length : id === 'validade' ? al.vencidos.length + al.vencendo.length : id === 'clientes' ? pendentesIdade() : id === 'entradas' ? D.db().notasEntrada.filter((n) => n.status === 'pendente').length : 0);
+const contador = (id, al) => (id === 'estoque' ? al.negativos.length : id === 'reposicao' ? al.baixo.length : id === 'validade' ? al.vencidos.length + al.vencendo.length : id === 'clientes' ? pendentesIdade() : id === 'entradas' ? D.db().notasEntrada.filter((n) => n.status === 'pendente').length : 0);
 const FONTE = { manual: 'documento conferido', ponte: 'consulta automática' };
 function badgeIdade(c) {
   const v = c.verificacao?.status;
@@ -236,7 +236,7 @@ const VIEWS = {
       const porLoja = D.lojasVenda().map((l) => {
         const vs = v30.filter((v) => v.lojaId === l.id);
         const r = resumo(vs);
-        return { l, r, hoje: resumo(vs.filter((v) => v.ts >= ini)).fat, baixo: al.baixo.filter((b) => b.loja.id === l.id).length, venc: al.vencidos.filter((x) => x.lojaId === l.id).length };
+        return { l, r, hoje: resumo(vs.filter((v) => v.ts >= ini)).fat, baixo: al.baixo.filter((b) => b.loja.id === l.id).length, venc: al.vencidos.filter((x) => x.lojaId === l.id).length, neg: al.negativos.filter((x) => x.loja.id === l.id).length };
       });
       c.innerHTML = `
         <div class="kpis">
@@ -246,6 +246,7 @@ const VIEWS = {
           ${kpi('Lucro bruto (30 d)', brl(r30.lucro), `margem ${pct(r30.margem)}`)}
         </div>
         <div class="alertas">
+          ${al.negativos.length ? `<a class="alerta vermelho" href="#/admin/estoque"><b>${al.negativos.length}</b><span>itens com estoque negativo: vendidos sem reposição pelo CD</span></a>` : ''}
           <a class="alerta ${al.baixo.length ? 'laranja' : ''}" href="#/admin/reposicao"><b>${al.baixo.length}</b><span>itens no mínimo ou zerados nas lojas</span></a>
           <a class="alerta ${al.vencendo.length ? 'amarelo' : ''}" href="#/admin/validade"><b>${al.vencendo.length}</b><span>lotes vencendo em até ${D.cfg().diasAlertaValidade} dias</span></a>
           <a class="alerta ${al.vencidos.length ? 'vermelho' : ''}" href="#/admin/validade"><b>${al.vencidos.length}</b><span>lotes vencidos para retirar</span></a>
@@ -261,7 +262,7 @@ const VIEWS = {
             <tbody>${porLoja
               .map(
                 (x) => `<tr><td><b>${esc(x.l.nome)}</b></td><td class="n">${brl(x.hoje)}</td><td class="n">${brl(x.r.fat)}</td><td class="n">${num(x.r.n)}</td><td class="n">${brl(x.r.ticket)}</td><td class="n">${pct(x.r.margem)}</td>
-                <td class="n">${x.baixo ? `<span class="badge laranja">${x.baixo} baixo</span>` : ''} ${x.venc ? `<span class="badge vermelho">${x.venc} vencido</span>` : ''}${!x.baixo && !x.venc ? '<span class="badge verde">ok</span>' : ''}</td>
+                <td class="n">${x.neg ? `<span class="badge vermelho">${x.neg} negativo</span>` : ''} ${x.baixo ? `<span class="badge laranja">${x.baixo} baixo</span>` : ''} ${x.venc ? `<span class="badge vermelho">${x.venc} vencido</span>` : ''}${!x.baixo && !x.venc && !x.neg ? '<span class="badge verde">ok</span>' : ''}</td>
                 <td class="n"><a class="btn mini ghost" href="#/totem/${x.l.id}" target="_blank" rel="noopener">Totem ↗</a></td></tr>`,
               )
               .join('')}</tbody>
@@ -548,15 +549,17 @@ const VIEWS = {
           return { p, est, val: D.proximaValidade(p.id, lojaId) };
         })
         .filter((r) => (!q || r.p.nome.toLowerCase().includes(q) || (r.p.ean || '').includes(q)) && (!F.soBaixo || r.est <= r.p.minimo))
-        .sort((a, b) => a.p.categoria.localeCompare(b.p.categoria) || a.p.nome.localeCompare(b.p.nome));
+        .sort((a, b) => (a.est < 0 ? 0 : 1) - (b.est < 0 ? 0 : 1) || a.p.categoria.localeCompare(b.p.categoria) || a.p.nome.localeCompare(b.p.nome));
+      const negativos = linhas.filter((r) => r.est < 0);
       c.innerHTML = `
-        <div class="kpis">${kpi('Unidades em estoque', num(unidades))}${kpi('Valor a custo', brl(valorCusto))}${kpi('Valor a preço de venda', brl(valorVenda))}${kpi('Itens no mínimo', num(D.produtosAtivos().filter((p) => D.estoque(p.id, lojaId) <= p.minimo).length), ehDep ? 'depósito não gera alerta' : '')}</div>
+        <div class="kpis">${kpi('Unidades em estoque', num(unidades))}${kpi('Valor a custo', brl(valorCusto))}${kpi('Valor a preço de venda', brl(valorVenda))}${kpi('Itens no mínimo', num(D.produtosAtivos().filter((p) => D.estoque(p.id, lojaId) <= p.minimo).length), ehDep ? 'depósito não gera alerta' : '')}${kpi('Estoque negativo', num(negativos.length), negativos.length ? 'vendidos sem reposição' : 'nenhum', negativos.length ? 'alerta-vermelho' : '')}</div>
+        ${negativos.length ? `<p class="aviso-adm aviso-neg">⚠️ <b>${negativos.length} produto(s) com estoque negativo</b> nesta loja: foram vendidos sem ter entrado na loja (sem transferência do CD nem entrada de nota). Faça a transferência em <a href="#/admin/reposicao">Reposição</a>: ela cobre o negativo. Se o produto já estava na prateleira, confira com uma contagem.</p>` : ''}
         <div class="tabela-wrap"><table class="tabela">
           <thead><tr><th></th><th>Produto</th><th>Categoria</th><th class="n">Estoque</th><th class="n">Mínimo</th><th>Próx. validade</th><th>Situação</th><th class="n">Ações</th></tr></thead>
           <tbody>${linhas
             .map(({ p, est, val }) => {
-              const sit = est === 0 ? '<span class="badge vermelho">zerado</span>' : est <= p.minimo ? '<span class="badge laranja">no mínimo</span>' : '<span class="badge verde">ok</span>';
-              return `<tr><td class="emoji">${p.emoji}</td><td><b>${esc(p.nome)}</b></td><td>${esc(p.categoria)}</td><td class="n"><b>${est}</b></td><td class="n">${p.minimo}</td><td>${val ? `${fmtIso(val)} ${badgeDias(D.diasAte(val))}` : '—'}</td><td>${sit}</td>
+              const sit = est < 0 ? '<span class="badge vermelho" title="Vendido sem reposição na loja">negativo</span>' : est === 0 ? '<span class="badge vermelho">zerado</span>' : est <= p.minimo ? '<span class="badge laranja">no mínimo</span>' : '<span class="badge verde">ok</span>';
+              return `<tr><td class="emoji">${p.emoji}</td><td><b>${esc(p.nome)}</b></td><td>${esc(p.categoria)}</td><td class="n"><b class="${est < 0 ? 'txt-alerta' : ''}">${est}</b></td><td class="n">${p.minimo}</td><td>${val ? `${fmtIso(val)} ${badgeDias(D.diasAte(val))}` : '—'}</td><td>${sit}</td>
                 <td class="n nowrap"><button class="btn mini ghost" data-ent="${p.id}">+ Entrada</button><button class="btn mini ghost" data-per="${p.id}">− Perda</button><button class="btn mini ghost" data-inv="${p.id}">Contagem</button></td></tr>`;
             })
             .join('')}</tbody></table></div>`;
@@ -665,10 +668,10 @@ const VIEWS = {
           <tbody>${
             lista
               .map((r) => {
-                const disp = origem ? D.estoque(r.produto.id, origem) : 0;
+                const disp = origem ? Math.max(0, D.estoque(r.produto.id, origem)) : 0;
                 const q = Math.min(r.sugerido, disp);
-                return `<tr><td><input type="checkbox" name="sel" value="${r.produto.id}" ${q > 0 ? 'checked' : ''} ${disp ? '' : 'disabled'}></td><td>${r.produto.emoji} <b>${esc(r.produto.nome)}</b> ${r.critico ? `<span class="badge ${r.estoque ? 'laranja' : 'vermelho'}">${r.estoque ? 'no mínimo' : 'zerado'}</span>` : ''}</td>
-                <td class="n">${r.estoque}</td><td class="n">${r.minimo}</td><td class="n">${num(r.media, 1)}</td><td class="n"><b>${r.sugerido}</b></td><td class="n">${disp < r.sugerido ? `<span class="txt-alerta">${disp}</span>` : disp}</td>
+                return `<tr><td><input type="checkbox" name="sel" value="${r.produto.id}" ${q > 0 ? 'checked' : ''} ${disp ? '' : 'disabled'}></td><td>${r.produto.emoji} <b>${esc(r.produto.nome)}</b> ${r.critico ? `<span class="badge ${r.estoque > 0 ? 'laranja' : 'vermelho'}">${r.estoque < 0 ? 'negativo' : r.estoque ? 'no mínimo' : 'zerado'}</span>` : ''}</td>
+                <td class="n ${r.estoque < 0 ? 'txt-alerta' : ''}">${r.estoque}</td><td class="n">${r.minimo}</td><td class="n">${num(r.media, 1)}</td><td class="n"><b>${r.sugerido}</b></td><td class="n">${disp < r.sugerido ? `<span class="txt-alerta">${disp}</span>` : disp}</td>
                 <td class="n"><input type="number" class="qtd-in" name="q_${r.produto.id}" min="0" max="${disp}" value="${q}" aria-label="Quantidade"></td></tr>`;
               })
               .join('') || '<tr><td colspan="8" class="muted">Loja abastecida. Nada a repor. 👌</td></tr>'
@@ -1003,7 +1006,7 @@ const VIEWS = {
         e.preventDefault();
         try {
           const inv = D.registrarInventario(e.target.est.value, e.target.data.value);
-          toast(`Inventário registrado: ${inv.itens.length} itens`, 'ok');
+          toast(`Inventário registrado: ${inv.itens.length} itens${inv.negativos ? `. Atenção: ${inv.negativos} produto(s) com estoque negativo ficaram fora; faça a contagem deles e registre de novo` : ''}`, inv.negativos ? 'erro' : 'ok', inv.negativos ? 8000 : 2600);
         } catch (err) {
           toast(err.message, 'erro', 4000);
         }

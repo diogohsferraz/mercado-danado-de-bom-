@@ -71,9 +71,24 @@ export function carregar() {
     S = null;
   }
   if (!S || ![1, 2].includes(S.versao)) S = semente();
-  else migrar(S);
+  else {
+    migrar(S);
+    if (!S.migracoes?.negativo) corrigirVendasSemEstoque();
+  }
   gravar();
   return S;
+}
+// Versões anteriores paravam o estoque em zero ao vender sem saldo e só anotavam a falta na venda.
+// Aqui essas faltas viram saldo negativo (descontando o que tenha entrado depois).
+function corrigirVendasSemEstoque() {
+  for (const v of S.vendas)
+    if (v.status === 'ok')
+      for (const it of v.itens)
+        if (it.falta > 0) {
+          retirarPermitindoNegativo(it.produtoId, v.lojaId, it.falta);
+          mov('ajuste', it.produtoId, v.lojaId, -it.falta, { obs: `Venda nº ${v.numero} feita sem estoque na loja`, ref: v.id });
+        }
+  S.migracoes = { ...(S.migracoes || {}), negativo: true };
 }
 // Atualiza dados salvos por versões anteriores.
 function migrar(s) {
@@ -165,8 +180,18 @@ function mov(tipo, produtoId, lojaId, qtd, extra = {}) {
   if (S.movimentos.length > 5000) S.movimentos.splice(0, S.movimentos.length - 5000);
 }
 
+// Estoque negativo: venda sem saldo na loja fica registrada como "lote" negativo (sem validade).
+// Toda entrada (reposição do CD, nota, contagem, estorno) cobre o negativo primeiro.
 function addLote(produtoId, lojaId, qtd, validade = null) {
   if (qtd <= 0) return;
+  const neg = S.lotes.find((l) => l.produtoId === produtoId && l.lojaId === lojaId && l.qtd < 0);
+  if (neg) {
+    const cobre = Math.min(qtd, -neg.qtd);
+    neg.qtd += cobre;
+    qtd -= cobre;
+    if (neg.qtd === 0) S.lotes = S.lotes.filter((l) => l !== neg);
+    if (qtd <= 0) return;
+  }
   const igual = S.lotes.find((l) => l.produtoId === produtoId && l.lojaId === lojaId && (l.validade || null) === (validade || null));
   if (igual) igual.qtd += qtd;
   else S.lotes.push({ id: uid('l'), produtoId, lojaId, qtd, validade: validade || null, entrada: Date.now() });
@@ -182,8 +207,18 @@ function retirar(produtoId, lojaId, qtd) {
     resta -= t;
     retirados.push({ validade: l.validade, qtd: t });
   }
-  S.lotes = S.lotes.filter((l) => l.qtd > 0);
+  S.lotes = S.lotes.filter((l) => l.qtd !== 0);
   return { retirados, falta: resta };
+}
+// Baixa que pode deixar o saldo negativo (vendas): o que faltar vira saldo negativo na loja.
+function retirarPermitindoNegativo(produtoId, lojaId, qtd) {
+  const r = retirar(produtoId, lojaId, qtd);
+  if (r.falta > 0) {
+    const neg = S.lotes.find((l) => l.produtoId === produtoId && l.lojaId === lojaId && l.qtd < 0);
+    if (neg) neg.qtd -= r.falta;
+    else S.lotes.push({ id: uid('l'), produtoId, lojaId, qtd: -r.falta, validade: null, entrada: Date.now(), negativo: true });
+  }
+  return r;
 }
 
 export function entrada(produtoId, lojaId, qtd, validade, obs = '') {
@@ -202,7 +237,7 @@ export function perda(produtoId, lojaId, qtd, motivo, loteId = null) {
     if (!l) throw new Error('Lote não encontrado');
     const t = Math.min(l.qtd, qtd);
     l.qtd -= t;
-    S.lotes = S.lotes.filter((x) => x.qtd > 0);
+    S.lotes = S.lotes.filter((x) => x.qtd !== 0);
     mov('perda', produtoId, lojaId, -t, { motivo, validade: l.validade });
   } else {
     if (qtd > estoque(produtoId, lojaId)) throw new Error('Quantidade maior que o estoque');
@@ -307,7 +342,7 @@ export function finalizarVenda({ lojaId, canal, itens, pagamento, clienteId = nu
     ...(S.config.fiscal?.nfce?.ativa ? { nfce: { status: 'pendente', tentativas: 0 } } : {}),
   };
   for (const l of c.linhas) {
-    const r = retirar(l.produtoId, lojaId, l.qtd);
+    const r = retirarPermitindoNegativo(l.produtoId, lojaId, l.qtd);
     venda.itens.push({ produtoId: l.produtoId, nome: l.nome, qtd: l.qtd, preco: l.preco, custo: l.custo, lotes: r.retirados, falta: r.falta });
     mov('venda', l.produtoId, lojaId, -l.qtd, { ref: venda.id, falta: r.falta || undefined });
   }
@@ -331,6 +366,10 @@ export function estornarVenda(id, motivo = '') {
     for (const lt of it.lotes || []) {
       addLote(it.produtoId, v.lojaId, lt.qtd, lt.validade);
       q += lt.qtd;
+    }
+    if (it.falta > 0) {
+      addLote(it.produtoId, v.lojaId, it.falta, null);
+      q += it.falta;
     }
     if (q) mov('estorno', it.produtoId, v.lojaId, q, { ref: v.id });
   }
@@ -513,6 +552,9 @@ export function reposicao(lojaId) {
 
 export function alertas() {
   const baixo = [];
+  const negativos = S.lotes
+    .filter((l) => l.qtd < 0 && loja(l.lojaId)?.ativa && produto(l.produtoId))
+    .map((l) => ({ produto: produto(l.produtoId), loja: loja(l.lojaId), qtd: l.qtd }));
   for (const l of lojasVenda())
     for (const p of produtosAtivos()) {
       const q = estoque(p.id, l.id);
@@ -527,7 +569,7 @@ export function alertas() {
     if (d < 0) vencidos.push({ ...lt, dias: d });
     else if (d <= lim) vencendo.push({ ...lt, dias: d });
   }
-  return { baixo, vencendo, vencidos };
+  return { baixo, vencendo, vencidos, negativos };
 }
 
 // ---------- Cadastros ----------
@@ -651,7 +693,8 @@ export function registrarInventario(estabelecimentoId, data) {
   const itens = produtosAtivos()
     .map((p) => ({ produtoId: p.id, qtd: e.lojaIds.reduce((a, l) => a + estoque(p.id, l), 0), custo: p.custo }))
     .filter((i) => i.qtd > 0);
-  const inv = { id: uid('i'), estabelecimentoId, data, ts: Date.now(), itens };
+  const negativos = produtosAtivos().filter((p) => e.lojaIds.some((l) => estoque(p.id, l) < 0)).length;
+  const inv = { id: uid('i'), estabelecimentoId, data, ts: Date.now(), itens, negativos };
   S.inventarios = S.inventarios.filter((x) => !(x.estabelecimentoId === estabelecimentoId && x.data === data));
   S.inventarios.push(inv);
   salvar();
@@ -803,6 +846,7 @@ function estrutura(config) {
       fiscal: fiscalPadrao(),
     },
     inventarios: [],
+    migracoes: { negativo: true },
     notasEntrada: [],
     notasSaida: [],
     depara: {},

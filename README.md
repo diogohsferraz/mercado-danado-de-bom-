@@ -43,6 +43,7 @@ Dados de demonstração: 3 lojas + 1 depósito em Maceió/AL, 39 produtos, 45 di
 - **Painel:** faturamento de hoje comparado com ontem, 30 dias, ticket médio, lucro bruto, alertas e comparativo entre lojas.
 - **Vendas e relatórios:** filtro por período e loja; faturamento por dia e por hora (horários de pico); recortes por forma de pagamento, canal e categoria; top 10 produtos com margem; lista de vendas com estorno; exportação CSV (abre no Excel).
 - **Produtos:** cadastro com código de barras (ou código interno gerado), preço, custo, margem e estoque mínimo.
+- **Estoque negativo:** vender um produto que não entrou na loja deixa o saldo negativo. Isso sinaliza a venda sem reposição pelo CD, com alerta no painel e no menu. A transferência do CD, a entrada de nota ou a contagem cobrem o negativo primeiro.
 - **Estoque por loja e por lote:** entrada com validade, baixa por perda (vencido, avaria, furto), contagem de inventário e histórico de movimentações.
 - **Validade:** lotes vencidos ou a vencer, valor em risco e perdas dos últimos 30 dias. As vendas consomem primeiro o lote que vence antes (FEFO).
 - **Reposição:** sugestão por loja baseada no estoque mínimo e na venda média dos últimos 14 dias; transferência em lote a partir do depósito; lista impressa para o repositor; lista de compras para o fornecedor (CSV).
