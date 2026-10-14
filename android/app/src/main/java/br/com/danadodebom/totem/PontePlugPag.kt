@@ -139,7 +139,8 @@ class PontePlugPag(private val activity: MainActivity, private val web: WebView)
     @JavascriptInterface
     fun ativar(id: String, json: String) = executar(id, json) { j ->
         val r = plugPag.initializeAndActivatePinpad(PlugPagActivationData(j.getString("codigo")))
-        if (r.result == PlugPag.RET_OK) JSONObject().put("ok", true) else erro(r.message?.takeIf { it.isNotBlank() } ?: "Ativação recusada", r.errorCode)
+        // PlugPagInitializationResult traz só o código do erro (sem mensagem).
+        if (r.result == PlugPag.RET_OK) JSONObject().put("ok", true) else erro("Ativação recusada pela PagBank (código ${r.errorCode ?: r.result})", r.errorCode)
     }
 
     @JavascriptInterface
