@@ -8,6 +8,7 @@ import * as ARQ from './arquivo.js';
 import { chamarPonte } from './ponte.js';
 import { abrirCamera } from './scanner.js';
 import * as N from './nfce.js';
+import * as M from './maquininha.js';
 
 const DIA = 864e5;
 const SECOES = [
@@ -25,8 +26,8 @@ const SECOES = [
   ['fiscal', '🧾', 'Fiscal e SPED'],
   ['config', '⚙️', 'Configurações'],
 ];
-const PAG = { credito: 'Crédito', debito: 'Débito', saldo: 'Carteira' };
-const COR_PAG = { credito: '#FF6B00', debito: '#111111', saldo: '#8DBF00' };
+const PAG = { credito: 'Crédito', debito: 'Débito', saldo: 'Carteira', pix: 'Pix' };
+const COR_PAG = { credito: '#FF6B00', debito: '#111111', saldo: '#8DBF00', pix: '#32BCAD' };
 const TIPO_MOV = { entrada: 'Entrada', venda: 'Venda', perda: 'Perda', ajuste: 'Inventário', transf_saida: 'Transferência (saída)', transf_entrada: 'Transferência (entrada)', estorno: 'Estorno' };
 
 // Filtros lembrados durante a sessão
@@ -878,6 +879,19 @@ const VIEWS = {
             </div></div>`;
         })
         .join('')}</div>
+        <section class="cartao" data-maquininha>
+          <h3>Maquininha PagBank Smart</h3>
+          ${M.disponivel()
+            ? `<p data-mq-status class="muted">Consultando a maquininha…</p>
+               <div class="lado">
+                 <label>Código de ativação PagBank<input name="ativacao" inputmode="numeric" placeholder="fornecido pela PagBank"></label>
+                 <button class="btn ghost" data-a="mq-ativar">Ativar</button>
+                 <button class="btn ghost" data-a="mq-via">Reimprimir última via</button>
+                 <button class="btn ghost" data-a="mq-config">Configurar o app (loja e endereço)</button>
+               </div>`
+            : '<p class="muted small">Este aparelho não é a maquininha. Na Smart 2, o app Android “Danado de Bom” (pasta <code>android/</code> do projeto) abre o totem e cobra direto na máquina: crédito, débito e Pix, com impressão do cupom. Veja <code>android/README.md</code>.</p>'}
+          <label class="check"><input type="checkbox" data-a="mq-auto" ${D.cfg().maquininha?.imprimirAuto ? 'checked' : ''}> Imprimir o cupom automaticamente no fim de cada compra (na maquininha)</label>
+        </section>
         <section class="cartao"><h3>Como instalar o totem</h3><ol class="passos">
           <li>Use um tablet ou monitor touch com um leitor de código de barras USB/Bluetooth (ele “digita” o código, não precisa configurar nada).</li>
           <li>Abra o link <b>Abrir totem</b> da loja, adicione à tela inicial e deixe em tela cheia (modo quiosque / fixação de tela do Android).</li>
@@ -886,6 +900,28 @@ const VIEWS = {
         </ol></section>`;
       $$('[data-ed]', c).forEach((b) => (b.onclick = () => formLoja(D.loja(b.dataset.ed))));
       $$('[data-qr]', c).forEach((b) => (b.onclick = () => qrLoja(b.dataset.qr)));
+      $('[data-a=mq-auto]', c).addEventListener('change', (e) => {
+        D.salvarConfig({ maquininha: { ...(D.cfg().maquininha || {}), imprimirAuto: e.target.checked } });
+        toast(e.target.checked ? 'Cupom será impresso automaticamente' : 'Cupom só quando o cliente pedir', 'ok');
+      });
+      if (M.disponivel()) {
+        M.status().then((r) => {
+          const el = $('[data-mq-status]', c);
+          if (el) el.innerHTML = r.ok ? `${r.ativado ? '<span class="badge verde">ativada</span>' : '<span class="badge vermelho">não ativada</span>'} · app ${esc(r.versaoApp || '')} · WebView ${esc(r.webview || '')}` : esc(r.mensagem || 'Sem resposta da maquininha');
+        });
+        $('[data-a=mq-ativar]', c).onclick = async () => {
+          const cod = $('[name=ativacao]', c).value.trim();
+          if (!cod) return toast('Informe o código de ativação', 'erro');
+          const r = await M.ativar(cod);
+          toast(r.ok ? 'Maquininha ativada' : r.mensagem || 'Falha na ativação', r.ok ? 'ok' : 'erro', 5000);
+          desenhar();
+        };
+        $('[data-a=mq-via]', c).onclick = async () => {
+          const r = await M.reimprimirViaCliente();
+          if (!r.ok) toast(r.mensagem || 'Falha ao imprimir', 'erro');
+        };
+        $('[data-a=mq-config]', c).onclick = () => M.abrirConfiguracao();
+      }
     };
     desenhar();
     return desenhar;
@@ -1378,9 +1414,14 @@ function detalheVenda(id) {
                   const just = await pedirJustificativa(v);
                   if (!just) return false;
                   await N.cancelar(v.id, just);
-                } else if (!(await confirmar(`Estornar a venda nº ${v.numero}? Os produtos voltam ao estoque${v.pagamento === 'saldo' ? ' e o valor volta para a carteira do cliente' : '. Estorne também na maquininha'}.`, { ok: 'Estornar', perigo: true }))) return false;
+                } else if (!(await confirmar(`Estornar a venda nº ${v.numero}? Os produtos voltam ao estoque${v.pagamento === 'saldo' ? ' e o valor volta para a carteira do cliente' : v.tef && M.disponivel() ? ' e o pagamento é estornado nesta maquininha' : '. Estorne também o pagamento na maquininha'}.`, { ok: 'Estornar', perigo: true }))) return false;
+                let avisoTef = '';
+                if (v.tef && M.disponivel()) {
+                  const r = await M.estornar(v.tef);
+                  if (!r.ok) avisoTef = ` ATENÇÃO: o estorno do ${PAG[v.pagamento]} falhou (${r.mensagem || 'erro'}). Faça pelo app PagBank.`;
+                } else if (v.tef) avisoTef = ` Estorne o ${PAG[v.pagamento]} (NSU ${v.tef.nsu || v.tef.transactionCode}) na maquininha PagBank ou no app PagBank.`;
                 D.estornarVenda(v.id, 'Estorno pelo painel');
-                toast(v.nfce?.status === 'cancelada' ? 'NFC-e cancelada e venda estornada' : 'Venda estornada', 'ok');
+                toast((v.nfce?.status === 'cancelada' ? 'NFC-e cancelada e venda estornada.' : 'Venda estornada.') + avisoTef, avisoTef ? 'erro' : 'ok', avisoTef ? 10000 : 3000);
               },
             },
           ]

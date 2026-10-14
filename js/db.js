@@ -311,7 +311,7 @@ function movCarteira(cli, valor, tipo, descricao, ref = null) {
   S.carteira.push({ id: uid('w'), ts: Date.now(), clienteId: cli.id, tipo, valor: arred(valor), saldoApos: cli.saldo, descricao, ref });
 }
 
-export function finalizarVenda({ lojaId, canal, itens, pagamento, clienteId = null, cupom = '', autorizacao = null }) {
+export function finalizarVenda({ lojaId, canal, itens, pagamento, clienteId = null, cupom = '', autorizacao = null, tef = null }) {
   if (!itens.length) throw new Error('Carrinho vazio');
   const c = calcular(itens, cupom);
   if (cupom && c.erroCupom) throw new Error(c.erroCupom);
@@ -337,6 +337,7 @@ export function finalizarVenda({ lojaId, canal, itens, pagamento, clienteId = nu
     total: c.total,
     pagamento,
     autorizacao,
+    ...(tef ? { tef } : {}),
     clienteId: cli?.id || null,
     status: 'ok',
     ...(S.config.fiscal?.nfce?.ativa ? { nfce: { status: 'pendente', tentativas: 0 } } : {}),

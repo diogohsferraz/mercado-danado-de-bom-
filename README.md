@@ -56,6 +56,10 @@ Dados de demonstração: 3 lojas + 1 depósito em Maceió/AL, 39 produtos, 45 di
   - produto sem NCM é bloqueado antes de chegar à SEFAZ, e o botão "Reenviar" emite depois da correção;
   - o estorno da venda cancela a nota;
   - os XMLs ficam arquivados na ponte (a base fiscal compartilhada por todas as lojas), e os do emissor anterior podem ser importados.
+- **Maquininha PagBank Smart 2:**
+  - o app Android ([`android/`](android/README.md)) abre o totem na própria máquina e cobra crédito, débito e Pix pela PlugPag;
+  - imprime o cupom com a NFC-e e estorna o pagamento junto com a venda;
+  - o GitHub Actions gera o APK a cada mudança.
 - **Notas de entrada:**
   - importa os XMLs das NF-e de compra (.xml ou .zip), ou baixa a nota **pela chave de acesso**: digitada ou lida do código de barras do DANFE, via ponte;
   - guarda todos os XMLs no aparelho;

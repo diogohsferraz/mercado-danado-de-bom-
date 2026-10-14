@@ -213,7 +213,7 @@ export function carregarScript(src) {
 
 // QR Code gerado localmente (js/vendor/qrcode-generator.js, MIT): funciona sem internet.
 export async function qrcode(el, texto, tamanho = 220) {
-  await carregarScript(new URL('./vendor/qrcode-generator.js', import.meta.url).href);
+  await carregarScript('js/vendor/qrcode-generator.js');
   const qr = window.qrcode(0, 'M');
   qr.addData(texto);
   qr.make();

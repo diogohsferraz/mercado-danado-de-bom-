@@ -3,10 +3,11 @@ import * as D from './db.js';
 import * as Sess from './sessao.js';
 import { $, $$, esc, brl, toast, modal, bip, logoSVG, tecladoHTML, ligarTeclado, qrcode } from './ui.js';
 import * as N from './nfce.js';
+import * as M from './maquininha.js';
 import { abrirCamera, escutarLeitor } from './scanner.js';
 import * as G from './geladeira.js';
 
-const NOME_PAG = { credito: 'Cartão de crédito', debito: 'Cartão de débito', saldo: 'Saldo da carteira' };
+const NOME_PAG = { credito: 'Cartão de crédito', debito: 'Cartão de débito', saldo: 'Saldo da carteira', pix: 'Pix' };
 const OCIOSO_MS = 120e3;
 
 export function renderCheckout(root, { lojaId, modo }) {
@@ -101,7 +102,7 @@ export function renderCheckout(root, { lojaId, modo }) {
           ${totem ? '<button class="btn ghost-escuro bloco" data-a="codigo">📲 Montei no celular — digitar código</button>' : ''}
         </div>
       </aside>
-      ${totem ? '' : '<button class="cc-barra" data-a="abrir-carrinho"><span>🛒 <b data-qtd>0</b> itens</span><b data-total>R$ 0,00</b><span class="cc-ver">Ver carrinho ›</span></button>'}`;
+      ${'<button class="cc-barra" data-a="abrir-carrinho"><span>🛒 <b data-qtd>0</b> itens</span><b data-total>R$ 0,00</b><span class="cc-ver">Ver carrinho ›</span></button>'}`;
 
     $('[data-a=camera]', corpo).onclick = () => abrirCamera(lerCodigo);
     $('[data-a=geladeira]', corpo)?.addEventListener('click', () => telaGeladeira());
@@ -187,7 +188,7 @@ export function renderCheckout(root, { lojaId, modo }) {
           )
           .join('')
       : `<div class="cc-vazio"><span>🧺</span><p>${totem ? 'Passe o primeiro produto no leitor' : 'Escaneie ou toque em um produto para começar'}</p></div>`;
-    if (!totem && c.linhas.length) lista.insertAdjacentHTML('afterbegin', '<button class="link cc-fechar" data-a="fechar-carrinho">‹ Continuar comprando</button>');
+    if (c.linhas.length) lista.insertAdjacentHTML('afterbegin', '<button class="link cc-fechar" data-a="fechar-carrinho">‹ Continuar comprando</button>');
     $$('[data-menos]', lista).forEach((b) => (b.onclick = () => adicionar(b.dataset.menos, -1, false)));
     $$('[data-mais]', lista).forEach((b) => (b.onclick = () => adicionar(b.dataset.mais, 1, false)));
     $('[data-a=fechar-carrinho]', lista)?.addEventListener('click', fecharCarrinhoCel);
@@ -256,8 +257,9 @@ export function renderCheckout(root, { lojaId, modo }) {
           <div class="pay-opcoes">
             ${
               totem
-                ? `<button class="opcao" data-pag="credito"><span>💳</span><b>Crédito</b><small>Maquininha ao lado</small></button>
-                   <button class="opcao" data-pag="debito"><span>💳</span><b>Débito</b><small>Maquininha ao lado</small></button>
+                ? `<button class="opcao" data-pag="credito"><span>💳</span><b>Crédito</b><small>${M.disponivel() ? 'Aproxime ou insira o cartão aqui' : 'Maquininha ao lado'}</small></button>
+                   <button class="opcao" data-pag="debito"><span>💳</span><b>Débito</b><small>${M.disponivel() ? 'Aproxime ou insira o cartão aqui' : 'Maquininha ao lado'}</small></button>
+                   ${M.disponivel() ? '<button class="opcao" data-pag="pix"><span>⚡</span><b>Pix</b><small>QR Code na tela da maquininha</small></button>' : ''}
                    <button class="opcao destaque" data-pag="saldo"><span>👛</span><b>Saldo da carteira</b><small>CPF ou celular + PIN</small></button>`
                 : `<button class="opcao destaque" data-pag="saldo"><span>👛</span><b>Pagar com saldo</b><small>Rápido, direto pelo celular</small></button>
                    <button class="opcao" data-pag="totem"><span>💳</span><b>Cartão no totem</b><small>Gera um código para pagar na maquininha</small></button>`
@@ -295,6 +297,7 @@ export function renderCheckout(root, { lojaId, modo }) {
   }
 
   function telaCartao(tipo) {
+    if (M.disponivel()) return telaMaquininha(tipo);
     st.etapa = 'cartao';
     const r = conta();
     corpo.innerHTML = `
@@ -320,6 +323,45 @@ export function renderCheckout(root, { lojaId, modo }) {
     };
     $('[data-a=aprovar]', corpo).onclick = () =>
       concluir({ pagamento: tipo, autorizacao: String(Math.floor(100000 + Math.random() * 900000)) });
+  }
+
+  // Pagamento na própria maquininha PagBank (app Android com PlugPag).
+  async function telaMaquininha(tipo) {
+    st.etapa = 'maquininha';
+    const r = conta();
+    const ref = M.novaReferencia();
+    corpo.innerHTML = `
+      <section class="pay pay-centro">
+        <div class="maquininha">${tipo === 'pix' ? '⚡' : '💳'}</div>
+        <h1>${brl(r.total)}</h1>
+        <p class="grande-txt" data-msg>${tipo === 'pix' ? 'Gerando o QR Code do Pix…' : `Aproxime ou insira seu cartão de <b>${tipo === 'credito' ? 'crédito' : 'débito'}</b>.`}</p>
+        <p class="aguarde"><span class="pontos"></span> Aguardando a maquininha</p>
+        <button class="btn ghost-escuro" data-a="cancelar">Cancelar pagamento</button>
+      </section>`;
+    const msg = $('[data-msg]', corpo);
+    $('[data-a=cancelar]', corpo).onclick = (e) => {
+      e.target.disabled = true;
+      e.target.textContent = 'Cancelando…';
+      M.cancelarOperacao();
+    };
+    const res = await M.pagar({ tipo, valor: r.total, referencia: ref }, (ev) => {
+      if (ev.mensagem && msg) msg.textContent = ev.mensagem;
+    });
+    if (st.etapa !== 'maquininha') return;
+    if (!res.ok) {
+      bip(false);
+      toast(res.mensagem || 'Pagamento não aprovado. Tente de novo ou escolha outra forma.', 'erro', 5000);
+      return telaPagamento();
+    }
+    const tef = { referencia: ref, transactionCode: res.transactionCode, transactionId: res.transactionId, nsu: res.nsu, bandeira: res.bandeira, tipo };
+    try {
+      concluir({ pagamento: tipo, autorizacao: res.nsu || res.transactionCode, tef, lancarErro: true });
+    } catch (err) {
+      // Pagamento aprovado, mas a venda não pôde ser registrada: devolve o dinheiro na hora.
+      const est = await M.estornar(tef);
+      toast(`${err.message}. ${est.ok ? 'O pagamento foi estornado.' : 'ATENÇÃO: estorne o pagamento na maquininha (' + (est.mensagem || 'falha') + ').'}`, 'erro', 9000);
+      telaPagamento();
+    }
   }
 
   function telaSaldo() {
@@ -369,10 +411,11 @@ export function renderCheckout(root, { lojaId, modo }) {
     });
   }
 
-  function concluir({ pagamento, autorizacao = null, clienteId = null }) {
+  function concluir({ pagamento, autorizacao = null, clienteId = null, tef = null, lancarErro = false }) {
     try {
-      st.venda = D.finalizarVenda({ lojaId, canal: modo, itens: itens(), pagamento, clienteId: clienteId || st.clienteId, cupom: st.cupom, autorizacao });
+      st.venda = D.finalizarVenda({ lojaId, canal: modo, itens: itens(), pagamento, clienteId: clienteId || st.clienteId, cupom: st.cupom, autorizacao, tef });
     } catch (err) {
+      if (lancarErro) throw err;
       toast(err.message, 'erro', 4500);
       return telaPagamento();
     }
@@ -401,11 +444,26 @@ export function renderCheckout(root, { lojaId, modo }) {
           ${cli ? `<div class="linha"><span>Saldo restante</span><b>${brl(cli.saldo)}</b></div>` : ''}
           ${v.nfce ? '<div class="nfce-box" data-nfce><span class="pontos"></span> Emitindo NFC-e…</div>' : ''}
         </div>
+        ${M.disponivel() ? `<div class="botoes-impressao"><button class="btn lime" data-a="imprimir">🖨 Imprimir cupom</button>${v.tef && v.pagamento !== 'pix' ? '<button class="btn ghost-escuro" data-a="via">Via do cartão</button>' : ''}</div>` : ''}
         <button class="btn primary grande" data-a="nova">Nova compra${totem ? ' <small data-cont></small>' : ''}</button>
       </section>`;
     $('[data-a=nova]', corpo).onclick = reiniciar;
+    const imprimir = async (botao) => {
+      if (botao) botao.disabled = true;
+      const r = await M.imprimirCupom({ venda: D.venda(v.id), loja: L, cfg: D.cfg(), estabelecimento: D.cfg().fiscal?.estabelecimentos?.find((e) => e.lojaIds?.includes(lojaId)) });
+      if (!r.ok) toast(r.mensagem || 'Não foi possível imprimir', 'erro', 4000);
+      if (botao) botao.disabled = false;
+    };
+    $('[data-a=imprimir]', corpo)?.addEventListener('click', (e) => imprimir(e.target));
+    $('[data-a=via]', corpo)?.addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      const r = await M.reimprimirViaCliente();
+      if (!r.ok) toast(r.mensagem || 'Não foi possível imprimir a via', 'erro', 4000);
+    });
     renderConta();
-    if (v.nfce) N.emitir(v.id).then((nf) => mostrarNfce(v.id, nf));
+    const autoImprimir = M.disponivel() && D.cfg().maquininha?.imprimirAuto;
+    if (v.nfce) N.emitir(v.id).then((nf) => (mostrarNfce(v.id, nf), autoImprimir && imprimir()));
+    else if (autoImprimir) imprimir();
     if (totem) {
       let s = 15;
       const el = $('[data-cont]', corpo);

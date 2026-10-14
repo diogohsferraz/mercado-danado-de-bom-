@@ -23,6 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Versão do app para a maquininha PagBank: mesmo código, compilado para WebViews antigos.
+      - name: Gerar pacote da maquininha
+        run: npx --yes esbuild@0.23.1 js/app.js --bundle --format=iife --target=chrome58 --minify --outfile=dist/maquininha.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
