@@ -59,6 +59,7 @@ export async function emitir(vendaId) {
       const r = await chamarPonte('/nfce/emitir', { ref: v.id, venda: montarVenda(v) });
       if (r.xml) await ARQ.guardarXml(r.chave, r.xml).catch(() => {});
       D.atualizarNfce(vendaId, { status: 'autorizada', chave: r.chave, numero: r.numero, serie: r.serie, protocolo: r.protocolo, qrcode: r.qrcode, urlConsulta: r.urlConsulta, arquivada: !!r.arquivada, erro: null, ts: Date.now() });
+      await enviarEmailPendente(vendaId);
     } catch (e) {
       // 400/422: rejeição ou dado inválido (precisa de correção). Demais: sem conexão → tenta de novo.
       const definitivo = e.status === 400 || e.status === 422 || e.status === 501;
@@ -77,9 +78,33 @@ export async function processarFila() {
   try {
     const fila = D.db().vendas.filter((v) => v.status === 'ok' && v.nfce?.status === 'pendente' && (v.nfce.tentativas || 0) < 30);
     for (const v of fila) await emitir(v.id);
+    // E-mails de nota que ficaram para depois (nota autorizada mais tarde ou falha no envio)
+    const emails = D.db().vendas.filter((v) => v.nfce?.status === 'autorizada' && v.nfce.email && v.nfce.emailStatus === 'pendente' && (v.nfce.emailTentativas || 0) < 10);
+    for (const v of emails) await enviarEmailPendente(v.id);
   } finally {
     rodando = false;
   }
+}
+
+// O cliente pediu a nota por e-mail no fim da compra (a nota não é impressa).
+export const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || '').trim()) && String(e).trim().length <= 120;
+export async function enviarPorEmail(vendaId, email) {
+  email = String(email || '').trim().toLowerCase();
+  if (!emailValido(email)) throw new Error('Confira o e-mail digitado');
+  D.atualizarNfce(vendaId, { email, emailStatus: 'pendente', emailErro: null, emailTentativas: 0 });
+  return enviarEmailPendente(vendaId);
+}
+async function enviarEmailPendente(vendaId) {
+  const v = D.venda(vendaId);
+  if (!v?.nfce?.email || v.nfce.emailStatus === 'enviado') return v?.nfce;
+  if (v.nfce.status !== 'autorizada') return v.nfce; // sai assim que a nota for autorizada
+  try {
+    await chamarPonte('/nfce/email', { ref: v.id, email: v.nfce.email });
+    D.atualizarNfce(vendaId, { emailStatus: 'enviado', emailEm: Date.now(), emailErro: null });
+  } catch (e) {
+    D.atualizarNfce(vendaId, { emailStatus: e.status === 400 ? 'erro' : 'pendente', emailErro: e.message, emailTentativas: (v.nfce.emailTentativas || 0) + 1 });
+  }
+  return D.venda(vendaId).nfce;
 }
 
 export async function reenviar(vendaId) {

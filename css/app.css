@@ -473,3 +473,11 @@ details.cartao[open] summary { margin-bottom: 0.8rem; }
 .nfce-qr { flex: none; width: 110px; min-height: 110px; display: grid; place-items: center; }
 .nfce-qr canvas { display: none; }
 .nfce-qr img { width: 110px; height: 110px; }
+
+.nota-email { width: min(100%, 440px); text-align: left; color: var(--texto); }
+.nota-email p { margin: 0 0 0.6rem; }
+.lado-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.lado-botoes .btn { flex: 1; }
+.form-email label { display: flex; flex-direction: column; gap: 0.3rem; font-weight: 600; margin-bottom: 0.6rem; }
+.form-email input { font-size: 1.1rem; }
+.botoes-impressao { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }

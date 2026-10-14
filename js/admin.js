@@ -1397,7 +1397,7 @@ function detalheVenda(id) {
       ${v.desconto ? `<div class="linha desconto"><span>Desconto (${esc(v.cupom)})</span><span>− ${brl(v.desconto)}</span></div>` : ''}
       <div class="linha total"><span>Total</span><b>${brl(v.total)}</b></div>
       ${v.status === 'estornada' ? `<p class="badge vermelho">Estornada em ${fmtDataHora(v.estorno.ts)} ${esc(v.estorno.motivo)}</p>` : ''}
-      ${v.nfce ? `<div class="linha"><span>NFC-e</span><span>${badgeNfce(v)}${v.nfce.numero ? ` nº ${esc(v.nfce.numero)}/${esc(v.nfce.serie)}` : ''}</span></div>${v.nfce.chave ? `<p class="mono small muted">${esc(v.nfce.chave)}</p>` : ''}${v.nfce.erro ? `<p class="small txt-alerta">${esc(v.nfce.erro)}</p>` : ''}` : ''}
+      ${v.nfce ? `<div class="linha"><span>NFC-e</span><span>${badgeNfce(v)}${v.nfce.numero ? ` nº ${esc(v.nfce.numero)}/${esc(v.nfce.serie)}` : ''}</span></div>${v.nfce.chave ? `<p class="mono small muted">${esc(v.nfce.chave)}</p>` : ''}${v.nfce.erro ? `<p class="small txt-alerta">${esc(v.nfce.erro)}</p>` : ''}${v.nfce.email ? `<div class="linha"><span>Nota por e-mail</span><span>${esc(v.nfce.email)} · ${v.nfce.emailStatus === 'enviado' ? '<span class="badge verde">enviada</span>' : v.nfce.emailStatus === 'erro' ? '<span class="badge vermelho">e-mail inválido</span>' : '<span class="badge amarelo">na fila</span>'}</span></div>` : ''}` : ''}
     </div>`,
     actions:
       v.status === 'ok'

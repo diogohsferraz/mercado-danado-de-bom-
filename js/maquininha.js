@@ -3,7 +3,7 @@
 //
 // Protocolo: o JS chama PlugPagNativo.<metodo>(id, json); o app responde chamando
 // window.__mdbNativo.retorno(id, resultado) e, durante o pagamento, __mdbNativo.evento(id, evento).
-import { brl, carregarScript } from './ui.js';
+import { brl } from './ui.js';
 
 const nativo = () => window.PlugPagNativo;
 export const disponivel = () => !!nativo();
@@ -58,7 +58,8 @@ const col = (esq, dir, largura = 32) => {
   return e.length + d.length + 1 > largura ? [e, ' '.repeat(Math.max(1, largura - d.length)) + d] : [e + ' '.repeat(espaco) + d];
 };
 
-// Cupom para a impressora térmica da maquininha (o app desenha as linhas em bitmap).
+// Comprovante da compra para a impressora térmica da maquininha (o app desenha as linhas em bitmap).
+// A NFC-e não é impressa: o cliente pode recebê-la por e-mail.
 export async function imprimirCupom({ venda, loja, cfg, estabelecimento }) {
   const L = [];
   const add = (t, o = {}) => L.push({ t, ...o });
@@ -81,27 +82,11 @@ export async function imprimirCupom({ venda, loja, cfg, estabelecimento }) {
   col('TOTAL', brl(venda.total)).forEach((t) => add(t, { negrito: true, grande: true }));
   add(`${NOME_PAG[venda.pagamento] || venda.pagamento}${venda.tef?.bandeira ? ` ${venda.tef.bandeira}` : ''}`);
   if (venda.tef?.nsu) add(`NSU ${venda.tef.nsu}`);
-  const nf = venda.nfce;
-  let qr = '';
-  if (nf?.status === 'autorizada') {
-    add('-'.repeat(32));
-    add(`NFC-e nº ${nf.numero}  Série ${nf.serie}`, { centro: true, negrito: true });
-    add('Consulte pela Chave de Acesso em', { centro: true });
-    add(nf.urlConsulta || 'www.sefaz.al.gov.br/nfce/consulta', { centro: true });
-    (nf.chave || '').match(/.{1,24}/g)?.forEach((p) => add(p.replace(/(\d{4})/g, '$1 ').trim(), { centro: true }));
-    if (nf.protocolo) add(`Protocolo ${nf.protocolo}`, { centro: true });
-    if (nf.qrcode) await carregarScript('js/vendor/qrcode-generator.js').catch(() => {});
-    if (nf.qrcode && window.qrcode) {
-      const q = window.qrcode(0, 'M');
-      q.addData(nf.qrcode);
-      q.make();
-      qr = q.createDataURL(4, 2);
-    }
-  } else if (nf) {
-    add('-'.repeat(32));
-    add('NFC-e em processamento', { centro: true });
-  }
+  add('-'.repeat(32));
+  add('COMPROVANTE DE COMPRA', { centro: true, negrito: true });
+  add('NÃO É DOCUMENTO FISCAL', { centro: true });
+  if (venda.nfce) add('A nota fiscal (NFC-e) foi emitida e pode ser enviada por e-mail.', { centro: true });
   add(' ');
   add(cfg.slogan || 'Obrigado e volte sempre!', { centro: true });
-  return chamar('imprimir', { linhas: L, qr });
+  return chamar('imprimir', { linhas: L });
 }

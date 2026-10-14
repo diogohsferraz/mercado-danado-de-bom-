@@ -13,6 +13,7 @@
 //   POST /nfe/baixar  { chave } com X-Chave-Admin → { ok, xml }  (NF-e de compra pela chave de acesso)
 //   POST /nfce/emitir { ref, venda }                → emite a NFC-e no provedor e arquiva o XML
 //   POST /nfce/cancelar { ref, chave, justificativa } com X-Chave-Admin
+//   POST /nfce/email  { ref, email }             → envia a NFC-e (DANFE e XML) para o e-mail do cliente
 //   POST /notas/guardar { xml } com X-Chave-Admin   → arquiva XML de saída emitido em outro sistema
 //   POST /notas/mes { mes: 'aaaamm', cursor }  com X-Chave-Admin → XMLs de saída do mês, em páginas
 //
@@ -58,6 +59,7 @@ export default {
         return json({ ok: true });
       }
       if (rota === '/nfce/emitir') return json({ ok: true, ...(await emitirNfce(corpo, env)) });
+      if (rota === '/nfce/email') return json({ ok: true, ...(await enviarEmailNfce(corpo, env)) });
       if (rota === '/nfce/cancelar') {
         if (!admin) return json({ ok: false, erro: 'O cancelamento exige a chave de administrador' }, 403);
         return json({ ok: true, ...(await cancelarNfce(corpo, env)) });
@@ -353,6 +355,27 @@ async function cancelarNfce({ ref, chave, justificativa }, env) {
   }
   if (chave) await arquivar(env, 'c', chave, xml);
   return { cancelada: true };
+}
+
+// Envia a NFC-e ao e-mail que o cliente informou no totem (em vez de imprimir).
+async function enviarEmailNfce({ ref, email }, env) {
+  ref = String(ref || '').replace(/[^\w-]/g, '').slice(0, 50);
+  email = String(email || '').trim().toLowerCase();
+  if (!ref) throw erro('Referência da venda ausente', 400);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 120) throw erro('E-mail inválido', 400);
+  if ((env.NFE_PROVEDOR || '') !== 'focus') throw erro('Envio de NFC-e por e-mail não configurado na ponte', 501);
+  const base = (env.FOCUS_URL || 'https://api.focusnfe.com.br').replace(/\/+$/, '');
+  const auth = 'Basic ' + btoa(`${env.FOCUS_TOKEN || ''}:`);
+  const r = await fetch(`${base}/v2/nfce/${encodeURIComponent(ref)}/email`, {
+    method: 'POST',
+    headers: { Authorization: auth, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emails: [email] }),
+  });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw erro(`Não foi possível enviar o e-mail: ${j.mensagem || r.status}`, r.status === 404 ? 404 : 502);
+  }
+  return { enviado: true };
 }
 
 // Arquiva XMLs de saída emitidos em outro sistema (histórico do emissor anterior).

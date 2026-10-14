@@ -444,7 +444,8 @@ export function renderCheckout(root, { lojaId, modo }) {
           ${cli ? `<div class="linha"><span>Saldo restante</span><b>${brl(cli.saldo)}</b></div>` : ''}
           ${v.nfce ? '<div class="nfce-box" data-nfce><span class="pontos"></span> Emitindo NFC-e…</div>' : ''}
         </div>
-        ${M.disponivel() ? `<div class="botoes-impressao"><button class="btn lime" data-a="imprimir">🖨 Imprimir cupom</button>${v.tef && v.pagamento !== 'pix' ? '<button class="btn ghost-escuro" data-a="via">Via do cartão</button>' : ''}</div>` : ''}
+        ${v.nfce ? '<div class="nota-email cartao" data-email></div>' : ''}
+        ${M.disponivel() ? `<div class="botoes-impressao"><button class="btn lime" data-a="imprimir">🖨 Imprimir comprovante</button>${v.tef && v.pagamento !== 'pix' ? '<button class="btn ghost-escuro" data-a="via">Via do cartão</button>' : ''}</div>` : ''}
         <button class="btn primary grande" data-a="nova">Nova compra${totem ? ' <small data-cont></small>' : ''}</button>
       </section>`;
     $('[data-a=nova]', corpo).onclick = reiniciar;
@@ -464,10 +465,59 @@ export function renderCheckout(root, { lojaId, modo }) {
     const autoImprimir = M.disponivel() && D.cfg().maquininha?.imprimirAuto;
     if (v.nfce) N.emitir(v.id).then((nf) => (mostrarNfce(v.id, nf), autoImprimir && imprimir()));
     else if (autoImprimir) imprimir();
+    // Nota fiscal por e-mail (não é impressa)
+    let pausado = false;
+    let s = 15;
+    const caixaEmail = $('[data-email]', corpo);
+    const perguntaEmail = () => {
+      caixaEmail.innerHTML = `<p><b>📧 Quer receber a nota fiscal por e-mail?</b></p><div class="lado-botoes"><button class="btn lime" data-a="email-sim">Sim, quero</button><button class="btn ghost" data-a="email-nao">Não, obrigado</button></div>`;
+      $('[data-a=email-sim]', caixaEmail).onclick = formularioEmail;
+      $('[data-a=email-nao]', caixaEmail).onclick = () => {
+        caixaEmail.innerHTML = '<p class="muted">Tudo bem! A nota fica registrada no sistema.</p>';
+        pausado = false;
+        s = Math.min(s, 8);
+      };
+    };
+    const formularioEmail = () => {
+      pausado = true;
+      caixaEmail.innerHTML = `<form class="form-email" autocomplete="on" novalidate>
+          <label>Seu e-mail<input name="email" type="email" inputmode="email" autocomplete="email" value="${esc(cli?.email || '')}" placeholder="voce@exemplo.com" required></label>
+          <div class="lado-botoes"><button class="btn lime">Enviar nota</button><button type="button" class="btn ghost" data-a="email-voltar">Cancelar</button></div>
+        </form>`;
+      const f = $('form', caixaEmail);
+      f.email.focus();
+      $('[data-a=email-voltar]', caixaEmail).onclick = () => {
+        pausado = false;
+        perguntaEmail();
+      };
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = f.email.value.trim();
+        if (!N.emailValido(email)) return toast('Confira o e-mail digitado', 'erro');
+        f.querySelector('.btn.lime').disabled = true;
+        try {
+          if (cli) D.guardarEmailCliente(cli.id, email.toLowerCase());
+          const nf = await N.enviarPorEmail(v.id, email);
+          caixaEmail.innerHTML =
+            nf?.emailStatus === 'enviado'
+              ? `<p>✅ Nota enviada para <b>${esc(email)}</b>.</p>`
+              : nf?.emailStatus === 'erro'
+                ? `<p class="txt-alerta">Não conseguimos enviar para ${esc(email)}. Confira o endereço com o responsável pela loja.</p>`
+                : `<p>📨 Vamos enviar a nota para <b>${esc(email)}</b> em instantes.</p>`;
+        } catch (err) {
+          toast(err.message, 'erro');
+          f.querySelector('.btn.lime').disabled = false;
+          return;
+        }
+        pausado = false;
+        s = Math.min(s, 8);
+      });
+    };
+    if (caixaEmail) perguntaEmail();
     if (totem) {
-      let s = 15;
       const el = $('[data-cont]', corpo);
       const iv = setInterval(() => {
+        if (pausado) return;
         s--;
         if (el) el.textContent = `(${s})`;
         if (s <= 0 || st.etapa !== 'fim') {

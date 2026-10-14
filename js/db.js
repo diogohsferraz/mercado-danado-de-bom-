@@ -523,6 +523,13 @@ export function ajustarSaldo(clienteId, valor, motivo) {
   movCarteira(cli, valor, 'ajuste', motivo || 'Ajuste manual');
   salvar();
 }
+export function guardarEmailCliente(clienteId, email) {
+  const c = cliente(clienteId);
+  if (c && !c.email) {
+    c.email = email;
+    salvar();
+  }
+}
 export const extrato = (clienteId) => S.carteira.filter((m) => m.clienteId === clienteId).sort((a, b) => b.ts - a.ts);
 
 // ---------- Indicadores ----------

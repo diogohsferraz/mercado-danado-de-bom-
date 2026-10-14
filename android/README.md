@@ -4,7 +4,7 @@ O app **Danado de Bom** roda na Moderninha Smart / Smart 2 e transforma a maquin
 
 - abre o totem do mercado em tela cheia (`maquininha.html#/totem/<loja>`);
 - cobra **crédito, débito e Pix na própria máquina** pela biblioteca **PlugPag** da PagBank, mostrando na tela as mensagens dela ("aproxime o cartão", "digite a senha");
-- **imprime o cupom** (itens, total, NSU, chave e QR Code da NFC-e) e reimprime a via do cartão;
+- **imprime o comprovante da compra** (itens, total e NSU, com a marca "não é documento fiscal") e reimprime a via do cartão. A NFC-e é emitida, mas não é impressa: o totem pergunta se o cliente quer a nota por e-mail;
 - **estorna** o pagamento quando a venda é estornada no painel;
 - usa a câmera da máquina para ler código de barras;
 - tem modo quiosque (fixa o app na tela) e configuração protegida por PIN.
@@ -57,7 +57,7 @@ O código segue a documentação pública da PlugPag (wrapper 1.35.0) e uma inte
 | Impressão: bitmap BMP de 384 px de largura, qualidade 4, avanço 70 | `Cupom.kt` e `PontePlugPag.imprimir` |
 | Estorno de Pix usando `VOID_QRCODE` | `PontePlugPag.estornar` |
 | Versão do WebView da máquina (o site usa um pacote compatível com Chrome 58 ou mais novo) | aparece na configuração e no painel |
-| Layout do cupom: está simplificado e precisa ser conferido com o contador contra o manual do DANFE NFC-e | `js/maquininha.js` (`imprimirCupom`) |
+| Entrega da NFC-e só por e-mail, quando o cliente pede: confirme com o contador que isso atende a SEFAZ-AL | `js/checkout.js` (fim da compra) |
 
 Se a PagBank pedir mudanças na homologação (por exemplo, categoria de app ou ícone), os ajustes ficam no `AndroidManifest.xml` e em `res/`.
 

@@ -92,6 +92,7 @@ O que a ponte garante:
 - **Sem duplicidade:** cada venda é enviada com uma referência única (o id da venda). Um reenvio devolve a nota já emitida em vez de emitir outra.
 - **Sem internet:** a venda é concluída e a NFC-e fica na fila do aparelho, que reenvia sozinha a cada minuto. Isso não é a contingência offline oficial (tpEmis 9). Se a loja ficar muito tempo sem internet, combine com o contador como emitir em contingência.
 - **Cancelamento:** feito ao estornar a venda no painel (`/nfce/cancelar`, com justificativa de 15 caracteres ou mais), dentro do prazo da SEFAZ-AL. O XML do cancelamento também é arquivado.
+- **Nota por e-mail:** no fim da compra o totem pergunta se o cliente quer a NFC-e por e-mail (`POST /nfce/email`). A nota não é impressa. Se ela ainda estiver na fila, o e-mail sai assim que for autorizada.
 - **Histórico:** os XMLs do emissor anterior entram pelo botão "Importar XMLs de venda do emissor anterior" (`/notas/guardar`).
 
 Os nomes dos campos enviados ao provedor estão em uma única função (`payloadFocus` em `worker.js`). Confira-os na documentação atual do Focus NFe antes de ir para produção.
