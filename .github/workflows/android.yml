@@ -15,7 +15,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      # O runner ubuntu-latest já traz o Android SDK (ANDROID_HOME); o Gradle baixa a plataforma que faltar.
+      - name: Conferir Android SDK
+        run: echo "ANDROID_HOME=$ANDROID_HOME" && ls "$ANDROID_HOME/platforms" | tail -3
       - name: Compilar APK
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug assembleRelease --stacktrace
