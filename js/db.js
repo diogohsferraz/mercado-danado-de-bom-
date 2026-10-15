@@ -118,6 +118,8 @@ function migrar(s) {
   s.config.fiscal.nfce ||= { ativa: false, cpfNaNota: true };
   s.produtos.forEach((p) => (p.st ??= false));
   s.depara ||= {};
+  // Cervejeira: liga o botão na loja. Quem já tinha geladeira cadastrada continua vendo o botão.
+  s.lojas.forEach((l) => (l.cervejeira ??= s.geladeiras.some((g) => g.lojaId === l.id && g.ativa)));
   s.versao = 2;
 }
 function gravar() {
@@ -473,7 +475,11 @@ export function definirVerificacao(clienteId, status, { fonte = 'manual', nascim
   salvar();
 }
 export const geladeira = (id) => S.geladeiras.find((g) => g.id === id);
-export const geladeirasDaLoja = (lojaId) => S.geladeiras.filter((g) => g.lojaId === lojaId && g.ativa && loja(g.lojaId)?.ativa);
+// Cervejeiras que aparecem no totem e no celular: a loja precisa estar com a Cervejeira ligada.
+export const geladeirasDaLoja = (lojaId) => {
+  const l = loja(lojaId);
+  return l?.ativa && l.cervejeira ? S.geladeiras.filter((g) => g.lojaId === lojaId && g.ativa) : [];
+};
 export function salvarGeladeira(d) {
   if (!d.nome) throw new Error('Informe o nome');
   if (!loja(d.lojaId)) throw new Error('Escolha a loja');
@@ -491,6 +497,8 @@ export function salvarGeladeira(d) {
   else {
     g = { id: uid('g'), ...campos };
     S.geladeiras.push(g);
+    // Primeira cervejeira da loja: liga o botão. Depois, quem decide é a chave no cadastro da loja.
+    if (!S.geladeiras.some((x) => x !== g && x.lojaId === g.lojaId)) loja(g.lojaId).cervejeira = true;
   }
   salvar();
   return g;
@@ -623,7 +631,8 @@ export function eanInterno() {
 export function salvarLoja(d) {
   if (!d.nome) throw new Error('Informe o nome');
   let l = d.id && loja(d.id);
-  const campos = { nome: d.nome, endereco: d.endereco || '', tipo: d.tipo === 'deposito' ? 'deposito' : 'loja', ativa: d.ativa !== false };
+  const tipo = d.tipo === 'deposito' ? 'deposito' : 'loja';
+  const campos = { nome: d.nome, endereco: d.endereco || '', tipo, ativa: d.ativa !== false, cervejeira: tipo === 'loja' && !!d.cervejeira };
   if (l) Object.assign(l, campos);
   else {
     l = { id: uid('s'), ...campos };
@@ -883,9 +892,9 @@ function semente() {
   const s = estrutura();
 
   s.lojas = [
-    { id: 'loja1', nome: 'Cond. Jardim das Palmeiras', endereco: 'Ponta Verde, Maceió/AL', tipo: 'loja', ativa: true },
-    { id: 'loja2', nome: 'Empresarial Jatiúca', endereco: 'Jatiúca, Maceió/AL', tipo: 'loja', ativa: true },
-    { id: 'loja3', nome: 'Cond. Vila Farol', endereco: 'Farol, Maceió/AL', tipo: 'loja', ativa: true },
+    { id: 'loja1', nome: 'Cond. Jardim das Palmeiras', endereco: 'Ponta Verde, Maceió/AL', tipo: 'loja', ativa: true, cervejeira: true },
+    { id: 'loja2', nome: 'Empresarial Jatiúca', endereco: 'Jatiúca, Maceió/AL', tipo: 'loja', ativa: true, cervejeira: false },
+    { id: 'loja3', nome: 'Cond. Vila Farol', endereco: 'Farol, Maceió/AL', tipo: 'loja', ativa: true, cervejeira: true },
     { id: 'dep', nome: 'Depósito Central', endereco: 'Tabuleiro, Maceió/AL', tipo: 'deposito', ativa: true },
   ];
 
@@ -1056,8 +1065,8 @@ function semente() {
 
   // Geladeiras com trava e histórico de aberturas
   s.geladeiras = [
-    { id: 'g1', lojaId: 'loja1', nome: 'Geladeira de bebidas', apenasMaiores: true, ativa: true, trava: { modo: 'simulada', webhookUrl: '', ponteId: 'g1', segundos: 8 } },
-    { id: 'g2', lojaId: 'loja3', nome: 'Geladeira de cervejas', apenasMaiores: true, ativa: true, trava: { modo: 'simulada', webhookUrl: '', ponteId: 'g2', segundos: 8 } },
+    { id: 'g1', lojaId: 'loja1', nome: 'Cervejeira', apenasMaiores: true, ativa: true, trava: { modo: 'simulada', webhookUrl: '', ponteId: 'g1', segundos: 8 } },
+    { id: 'g2', lojaId: 'loja3', nome: 'Cervejeira', apenasMaiores: true, ativa: true, trava: { modo: 'simulada', webhookUrl: '', ponteId: 'g2', segundos: 8 } },
   ];
   for (let d = 14; d >= 0; d--) {
     for (let k = int(1, 5); k > 0; k--) {

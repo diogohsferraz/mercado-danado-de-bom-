@@ -8,7 +8,7 @@ Totem / celular ──► Ponte ──► Provedor de CPF (data de nascimento)
                       └──► Webhook da Cena eWeLink ──► relé ──► trava magnética
 ```
 
-**Por que existe:** se o navegador chamasse o eWeLink direto, a URL do webhook ficaria visível no código da página e qualquer pessoa poderia abrir a geladeira. Aqui quem decide é a ponte: ela confere a maioridade do CPF no provedor e só então aciona o relé. Mesmo que alguém altere os dados no navegador, a ponte nega (há um teste automatizado para isso).
+**Por que existe:** se o navegador chamasse o eWeLink direto, a URL do webhook ficaria visível no código da página e qualquer pessoa poderia abrir a cervejeira. Aqui quem decide é a ponte: ela confere a maioridade do CPF no provedor e só então aciona o relé. Mesmo que alguém altere os dados no navegador, a ponte nega (há um teste automatizado para isso).
 
 ## 1. Prepare o eWeLink
 
@@ -45,7 +45,7 @@ npx wrangler secret put SERPRO_SECRET
 npx wrangler deploy
 ```
 
-O formato de `GELADEIRAS` é o identificador da geladeira no app → URL do webhook:
+O formato de `GELADEIRAS` é o identificador da cervejeira no app → URL do webhook:
 
 ```json
 {"g1": {"webhook": "https://…url-da-cena-ewelink…"}, "g2": {"webhook": "https://…"}}
@@ -60,7 +60,7 @@ Em `wrangler.toml`, ajuste `ORIGEM` para o endereço do app e `PROVEDOR`. Recome
    - o endereço `https://ponte-mercado.<sua-conta>.workers.dev`;
    - as duas chaves;
    - depois clique em **Testar conexão**.
-2. **Administração → Geladeiras → Editar:**
+2. **Administração → Cervejeiras → Editar:**
    - modo da trava **Ponte segura**;
    - o mesmo identificador usado em `GELADEIRAS`;
    - depois clique em **Testar destravar**.
@@ -105,6 +105,6 @@ Os nomes dos campos enviados ao provedor estão em uma única função (`payload
 
 ## Limites que você precisa conhecer
 
-- **CPF prova a idade do dono do CPF, não de quem está na frente da geladeira.** Um menor pode usar o CPF de um adulto. O PIN reduz esse risco. Para eliminá-lo, o próximo passo é a verificação facial (ex.: Serpro **Datavalid**, que compara uma selfie com a foto da CNH).
+- **CPF prova a idade do dono do CPF, não de quem está na frente da cervejeira.** Um menor pode usar o CPF de um adulto. O PIN reduz esse risco. Para eliminá-lo, o próximo passo é a verificação facial (ex.: Serpro **Datavalid**, que compara uma selfie com a foto da CNH).
 - Nesta versão o PIN do cliente é conferido no navegador. A ponte garante a **idade**, mas a garantia de **quem é** a pessoa depende do backend com login, que está no roteiro do projeto.
 - Os endereços da API do Serpro em `worker.js` seguem a documentação pública. Confira-os no seu contrato antes de ativar.

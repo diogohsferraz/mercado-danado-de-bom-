@@ -21,7 +21,7 @@ const SECOES = [
   ['reposicao', '🚚', 'Reposição'],
   ['clientes', '👥', 'Clientes e carteira'],
   ['cupons', '🎟️', 'Cupons'],
-  ['geladeiras', '🧊', 'Geladeiras'],
+  ['geladeiras', '🍺', 'Cervejeiras'],
   ['lojas', '🏪', 'Lojas e totens'],
   ['fiscal', '🧾', 'Fiscal e SPED'],
   ['config', '⚙️', 'Configurações'],
@@ -787,10 +787,10 @@ const VIEWS = {
     return desenhar;
   },
 
-  // ---------- Geladeiras ----------
+  // ---------- Cervejeiras (geladeira com trava, só 18+) ----------
   geladeiras(main) {
     main.innerHTML =
-      cab('Geladeiras com trava', '<button class="btn primary" data-a="nova">+ Nova geladeira</button>') +
+      cab('Cervejeiras com trava', '<button class="btn primary" data-a="nova">+ Nova cervejeira</button>') +
       `<div class="filtros">${selLoja('gelLoja', F.gelLoja, { todas: true, deposito: false })}</div><div data-c></div>`;
     const c = $('[data-c]', main);
     $('[data-a=nova]', main).onclick = () => formGeladeira();
@@ -813,31 +813,36 @@ const VIEWS = {
           ${kpi('Clientes 18+ verificados', num(D.db().clientes.filter((x) => x.verificacao?.status === 'aprovado').length))}
           ${kpi('Verificação de idade', modo === 'ponte' ? 'Automática' : 'Manual', modo === 'ponte' ? 'consulta do CPF pela ponte' : 'documento conferido pelo operador')}
         </div>
-        <p class="aviso-adm">🔞 Regra fixa: as geladeiras só destravam para clientes com maioridade confirmada (documento conferido pelo operador ou consulta do CPF). Menores e cadastros não verificados são sempre barrados.</p>
+        ${D.lojasVenda()
+          .filter((l) => !F.gelLoja || l.id === F.gelLoja)
+          .map((l) => `<p class="small ${l.cervejeira ? 'muted' : 'txt-alerta'}">🏪 ${esc(l.nome)}: botão “Abrir cervejeira” ${l.cervejeira ? '<b>ligado</b>' : '<b>desligado</b> (liga em Lojas e totens → Editar)'}</p>`)
+          .join('')}
+        <p class="aviso-adm">🔞 Regra fixa: as cervejeiras só destravam para clientes com maioridade confirmada (documento conferido pelo operador ou consulta do CPF). Menores e cadastros não verificados são sempre barrados.</p>
         <div class="grade-lojas">${
           gs
             .map(
               (g) => `<div class="cartao loja-card ${g.ativa ? '' : 'inativo'}">
-            <div class="lc-topo"><span class="lc-ic">🧊</span><div><b>${esc(g.nome)}</b><small>${esc(D.loja(g.lojaId)?.nome || '—')}</small></div></div>
+            <div class="lc-topo"><span class="lc-ic">🍺</span><div><b>${esc(g.nome)}</b><small>${esc(D.loja(g.lojaId)?.nome || '—')}</small></div></div>
             <p class="muted small">🔞 Somente maiores de 18 · Trava: <b>${MODO_TRAVA[g.trava.modo]}</b> · abre por ${g.trava.segundos} s${g.ativa ? '' : ' · <b>inativa</b>'}</p>
+            ${g.ativa && !D.loja(g.lojaId)?.cervejeira ? '<p class="small txt-alerta">Botão oculto no totem e no celular: a Cervejeira está desligada nesta loja.</p>' : ''}
             ${g.trava.modo === 'webhook' ? '<p class="small txt-alerta">Modo de teste: a URL do webhook fica visível no navegador.</p>' : ''}
             <div class="lc-acoes"><button class="btn mini primary" data-teste="${g.id}">🔓 Testar destravar</button><button class="btn mini ghost" data-ed="${g.id}">Editar</button></div>
           </div>`,
             )
-            .join('') || '<p class="muted">Nenhuma geladeira cadastrada.</p>'
+            .join('') || '<p class="muted">Nenhuma cervejeira cadastrada.</p>'
         }</div>
-        <section class="cartao"><h3>Últimas tentativas de abertura</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>Data</th><th>Geladeira</th><th>Cliente</th><th>Canal</th><th>Resultado</th></tr></thead><tbody>${
+        <section class="cartao"><h3>Últimas tentativas de abertura</h3><div class="tabela-wrap"><table class="tabela"><thead><tr><th>Data</th><th>Cervejeira</th><th>Cliente</th><th>Canal</th><th>Resultado</th></tr></thead><tbody>${
           acessos
             .slice(-120)
             .reverse()
             .map((a) => `<tr><td>${fmtDataHora(a.ts)}</td><td>${esc(D.geladeira(a.geladeiraId)?.nome || '—')}<br><small class="muted">${esc(D.loja(a.lojaId)?.nome || '')}</small></td><td>${esc(D.cliente(a.clienteId)?.nome || (a.teste ? 'Teste do administrador' : '—'))}</td><td>${a.canal === 'totem' ? 'Totem' : a.canal === 'celular' ? 'Celular' : 'Painel'}</td><td>${a.ok ? '<span class="badge verde">aberta</span>' : `<span class="badge vermelho">negada</span> <small>${esc(a.motivo)}</small>`}</td></tr>`)
             .join('') || '<tr><td colspan="5" class="muted">Nenhuma tentativa ainda.</td></tr>'
         }</tbody></table></div></section>
-        <section class="cartao"><h3>Como ligar a sua geladeira eWeLink</h3><ol class="passos">
+        <section class="cartao"><h3>Como ligar a sua cervejeira eWeLink</h3><ol class="passos">
           <li>No app eWeLink, deixe o relé da trava em <b>modo pulso (inching)</b> com o tempo de abertura. Assim ele volta a travar sozinho.</li>
           <li>Crie uma <b>Cena</b> com o gatilho <b>Webhook</b> e a ação “ligar” o relé. Copie a URL gerada.</li>
-          <li>Para testar rápido: cadastre a geladeira no modo <b>Webhook direto</b> e cole a URL.</li>
-          <li>Para usar com clientes: publique a <b>ponte</b> (pasta <code>ponte/</code> do projeto) com a URL do webhook e a chave do provedor de consulta de CPF. Depois troque a geladeira para o modo <b>Ponte</b> e a verificação para <b>Ponte</b> em Configurações. Com isso, a idade é conferida no servidor antes de destravar.</li>
+          <li>Para testar rápido: cadastre a cervejeira no modo <b>Webhook direto</b> e cole a URL.</li>
+          <li>Para usar com clientes: publique a <b>ponte</b> (pasta <code>ponte/</code> do projeto) com a URL do webhook e a chave do provedor de consulta de CPF. Depois troque a cervejeira para o modo <b>Ponte</b> e a verificação para <b>Ponte</b> em Configurações. Com isso, a idade é conferida no servidor antes de destravar.</li>
         </ol></section>`;
       $$('[data-ed]', c).forEach((b) => (b.onclick = () => formGeladeira(D.geladeira(b.dataset.ed))));
       $$('[data-teste]', c).forEach(
@@ -873,6 +878,7 @@ const VIEWS = {
           return `<div class="cartao loja-card ${l.ativa ? '' : 'inativo'}">
             <div class="lc-topo"><span class="lc-ic">${l.tipo === 'deposito' ? '🏭' : '🏪'}</span><div><b>${esc(l.nome)}</b><small>${esc(l.endereco || 'sem endereço')}</small></div></div>
             <p class="muted small">${l.tipo === 'deposito' ? 'Depósito (não vende)' : 'Loja autônoma'} · ${num(unidades)} unidades em estoque ${l.ativa ? '' : '· <b>inativa</b>'}</p>
+            ${l.tipo === 'loja' ? (l.cervejeira ? '<p class="small"><span class="badge verde">🍺 Cervejeira ligada</span></p>' : '<p class="small muted">Sem Cervejeira</p>') : ''}
             <div class="lc-acoes">
               ${l.tipo === 'loja' && l.ativa ? `<a class="btn mini primary" href="#/totem/${l.id}" target="_blank" rel="noopener">Abrir totem ↗</a><button class="btn mini ghost" data-qr="${l.id}">QR Code do celular</button>` : ''}
               <button class="btn mini ghost" data-ed="${l.id}">Editar</button>
@@ -1183,7 +1189,7 @@ const VIEWS = {
       $('[data-a=testar-ponte]', main).onclick = async () => {
         try {
           const r = await G.statusPonte();
-          toast(`Ponte ok · provedor: ${r.provedor} · geladeiras: ${(r.geladeiras || []).join(', ') || 'nenhuma'}`, 'ok', 5000);
+          toast(`Ponte ok · provedor: ${r.provedor} · cervejeiras: ${(r.geladeiras || []).join(', ') || 'nenhuma'}`, 'ok', 5000);
         } catch (err) {
           toast(err.message, 'erro', 5000);
         }
@@ -1574,21 +1580,21 @@ function verificacaoCliente(id) {
 function formGeladeira(g = null) {
   const t = g?.trava || { modo: 'simulada', webhookUrl: '', ponteId: '', segundos: 8 };
   const m = modal({
-    title: g ? 'Editar geladeira' : 'Nova geladeira',
+    title: g ? 'Editar cervejeira' : 'Nova cervejeira',
     body: `<form class="form-col">
       <input type="hidden" name="id" value="${g?.id || ''}">
-      <label>Nome<input name="nome" value="${esc(g?.nome || 'Geladeira de bebidas')}" required></label>
+      <label>Nome<input name="nome" value="${esc(g?.nome || 'Cervejeira')}" required></label>
       <label>Loja${selLoja('lojaId', g?.lojaId || D.lojasVenda()[0]?.id, { deposito: false })}</label>
       <p class="aviso-adm small">🔞 Abre somente para maiores de 18 anos com maioridade confirmada. Esta regra não pode ser desligada.</p>
       <label>Como acionar a trava<select name="modo">${Object.entries(MODO_TRAVA).map(([v, n]) => `<option value="${v}" ${t.modo === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
       <label data-m="webhook">URL do webhook da Cena eWeLink<input name="webhookUrl" value="${esc(t.webhookUrl)}" placeholder="https://…"></label>
-      <p class="small txt-alerta" data-m="webhook">Só para testes: a URL fica visível no navegador e quem tiver acesso a ela abre a geladeira.</p>
+      <p class="small txt-alerta" data-m="webhook">Só para testes: a URL fica visível no navegador e quem tiver acesso a ela abre a cervejeira.</p>
       <label data-m="ponte">Identificador na ponte<input name="ponteId" value="${esc(t.ponteId || g?.id || '')}" placeholder="ex.: g1"></label>
       <label>Tempo destravada (segundos)<input name="segundos" type="number" min="3" max="60" value="${t.segundos}"></label>
       <p class="muted small">Use o mesmo tempo do modo pulso (inching) configurado no eWeLink.</p>
       <label class="check"><input type="checkbox" name="ativa" ${g?.ativa === false ? '' : 'checked'}> Ativa</label>
     </form>`,
-    actions: [{ label: 'Cancelar' }, { label: 'Salvar', cls: 'primary', onClick: (ctx) => (D.salvarGeladeira(lerForm(ctx.el.querySelector('form'))), toast('Geladeira salva', 'ok')) }],
+    actions: [{ label: 'Cancelar' }, { label: 'Salvar', cls: 'primary', onClick: (ctx) => (D.salvarGeladeira(lerForm(ctx.el.querySelector('form'))), toast('Cervejeira salva', 'ok')) }],
   });
   const f = m.el.querySelector('form');
   const mostrar = () => $$('[data-m]', f).forEach((el) => (el.hidden = el.dataset.m !== f.modo.value));
@@ -1858,17 +1864,24 @@ function formCupom(k = null) {
 }
 
 function formLoja(l = null) {
-  modal({
+  const m = modal({
     title: l ? 'Editar loja' : 'Nova loja / depósito',
     body: `<form class="form-col">
       <input type="hidden" name="id" value="${l?.id || ''}">
       <label>Nome<input name="nome" value="${esc(l?.nome || '')}" required placeholder="Ex.: Cond. Jardim das Palmeiras"></label>
       <label>Endereço<input name="endereco" value="${esc(l?.endereco || '')}"></label>
       <label>Tipo<select name="tipo"><option value="loja" ${l?.tipo !== 'deposito' ? 'selected' : ''}>Loja autônoma (vende)</option><option value="deposito" ${l?.tipo === 'deposito' ? 'selected' : ''}>Depósito / estoque central</option></select></label>
+      <label class="check" data-cerv><input type="checkbox" name="cervejeira" ${l?.cervejeira ? 'checked' : ''}> 🍺 Esta loja tem Cervejeira</label>
+      <p class="muted small" data-cerv>Ligue só nas lojas que vendem bebida alcoólica e têm a geladeira com trava. O botão “Abrir cervejeira” aparece no totem e no celular, e só abre para maiores de 18 anos.</p>
       <label class="check"><input type="checkbox" name="ativa" ${l?.ativa === false ? '' : 'checked'}> Ativa</label>
     </form>`,
     actions: [{ label: 'Cancelar' }, { label: 'Salvar', cls: 'primary', onClick: (ctx) => (D.salvarLoja(lerForm(ctx.el.querySelector('form'))), toast('Loja salva', 'ok')) }],
   });
+  // Depósito não vende: a opção da Cervejeira só aparece para loja.
+  const f = m.el.querySelector('form');
+  const mostrar = () => $$('[data-cerv]', f).forEach((el) => (el.hidden = f.tipo.value !== 'loja'));
+  f.tipo.addEventListener('change', mostrar);
+  mostrar();
 }
 
 function qrLoja(id) {

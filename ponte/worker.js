@@ -47,7 +47,7 @@ export default {
 
       if (rota === '/destravar') {
         const g = geladeiras(env)[corpo.geladeira];
-        if (!g) return json({ ok: false, erro: 'Geladeira não cadastrada na ponte' }, 404);
+        if (!g) return json({ ok: false, erro: 'Cervejeira não cadastrada na ponte' }, 404);
         if (corpo.teste) {
           if (!admin) return json({ ok: false, erro: 'O teste exige a chave de administrador' }, 403);
         } else {
@@ -208,7 +208,7 @@ async function consultarNascimento(cpf, env) {
 
 // ---------- trava (eWeLink) ----------
 async function acionarWebhook(g) {
-  if (!g.webhook) throw erro('Webhook da geladeira não configurado', 500);
+  if (!g.webhook) throw erro('Webhook da cervejeira não configurado', 500);
   const r = await fetch(g.webhook, { method: g.metodo || 'GET' });
   if (!r.ok) throw erro(`eWeLink respondeu ${r.status}`, 502);
 }

@@ -45,6 +45,11 @@ export async function abrirGeladeira({ geladeiraId, clienteId, canal }) {
   const g = D.geladeira(geladeiraId);
   const cli = D.cliente(clienteId);
   const base = { geladeiraId, lojaId: g.lojaId, clienteId, canal };
+  // Cervejeira desligada na loja (ou inativa): o botão some e a trava também não abre.
+  if (!D.geladeirasDaLoja(g.lojaId).includes(g)) {
+    D.registrarAcesso({ ...base, ok: false, motivo: 'Cervejeira desligada nesta loja' });
+    return { ok: false, motivo: 'Cervejeira desligada nesta loja', falhaTecnica: true };
+  }
   // Regra fixa: só abre para cliente com maioridade confirmada (documento conferido ou consulta do CPF).
   const s = D.situacaoIdade(cli);
   if (!s.ok) {

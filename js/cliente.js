@@ -33,7 +33,7 @@ export function renderCliente(root) {
             : `<form class="form-col" data-f="criar">
                 <label>Nome completo<input name="nome" required autocomplete="name"></label>
                 <label>Celular com DDD<input name="telefone" inputmode="tel" required placeholder="(82) 99999-0000" autocomplete="tel"></label>
-                <label>CPF <small>(necessário para a geladeira de bebidas)</small><input name="cpf" inputmode="numeric" maxlength="14"></label>
+                <label>CPF <small>(necessário para a cervejeira)</small><input name="cpf" inputmode="numeric" maxlength="14"></label>
                 <label>Data de nascimento<input name="nascimento" type="date" required></label>
                 <label class="check consent"><input type="checkbox" name="consentimento"> Autorizo o uso do meu CPF para confirmar que sou maior de 18 anos (LGPD, art. 7º). O dado é usado só para liberar produtos 18+.</label>
                 <label>Crie um PIN de 4 números<input name="pin" type="password" inputmode="numeric" maxlength="4" pattern="\\d{4}" required></label>
@@ -142,15 +142,15 @@ export function renderCliente(root) {
   function blocoIdade(c) {
     const st = c.verificacao?.status || 'pendente';
     const modo = D.cfg().idade.modo;
-    const temGeladeira = D.db().geladeiras.some((g) => g.ativa);
+    const temGeladeira = D.lojasVenda().some((l) => D.geladeirasDaLoja(l.id).length);
     if (!temGeladeira && !D.db().produtos.some((p) => p.restrito18 && p.ativo)) return '';
     const falta = !D.cpfValido(c.cpf) ? 'Informe seu CPF em “Meus dados”.' : !c.nascimento ? 'Informe sua data de nascimento em “Meus dados”.' : '';
     const texto =
       st === 'aprovado'
-        ? 'Maioridade confirmada. Você já pode abrir a geladeira de bebidas e comprar produtos 18+.'
+        ? 'Maioridade confirmada. Você já pode abrir a cervejeira e comprar produtos 18+.'
         : st === 'recusado'
           ? 'Não conseguimos confirmar que você tem 18 anos ou mais. Se houve erro, fale com o responsável pela loja.'
-          : falta || (modo === 'ponte' ? 'Toque em verificar: consultamos seu CPF na hora.' : 'Mostre um documento com foto ao responsável pela loja para liberar a geladeira de bebidas.');
+          : falta || (modo === 'ponte' ? 'Toque em verificar: consultamos seu CPF na hora.' : 'Mostre um documento com foto ao responsável pela loja para liberar a cervejeira.');
     return `<div class="cartao verif verif-${st}">
       <div class="verif-topo"><span class="verif-ic">${st === 'aprovado' ? '✅' : st === 'recusado' ? '⛔' : '🔞'}</span><div><b>Verificação de idade</b><small>${st === 'aprovado' ? 'Aprovada' : st === 'recusado' ? 'Recusada' : 'Pendente'}</small></div></div>
       <p>${texto}</p>

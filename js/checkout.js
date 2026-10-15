@@ -84,7 +84,7 @@ export function renderCheckout(root, { lojaId, modo }) {
       <section class="co-catalogo">
         <div class="co-scan">
           <button class="btn primary grande" data-a="camera">📷 Escanear código de barras</button>
-          ${D.geladeirasDaLoja(lojaId).length ? '<button class="btn lime grande" data-a="geladeira">🧊 Abrir geladeira</button>' : ''}
+          ${D.geladeirasDaLoja(lojaId).length ? '<button class="btn lime grande" data-a="geladeira">🍺 Abrir cervejeira</button>' : ''}
           <form class="co-busca" autocomplete="off">
             <input type="search" name="q" placeholder="${totem ? 'Passe no leitor, digite o código ou o nome' : 'Buscar produto ou digitar código'}" value="${esc(st.busca)}" aria-label="Buscar produto">
           </form>
@@ -648,7 +648,7 @@ export function renderCheckout(root, { lojaId, modo }) {
     corpo.innerHTML = `
       <section class="pay pay-centro">
         <div class="negado-circulo">⛔</div>
-        <h1>${geladeira ? 'Não foi possível abrir a geladeira' : 'Não podemos concluir esta compra'}</h1>
+        <h1>${geladeira ? 'Não foi possível abrir a cervejeira' : 'Não podemos concluir esta compra'}</h1>
         <p class="grande-txt">${esc(si.motivo)}</p>
         ${comoResolver ? `<p>${comoResolver}</p>` : ''}
         ${!geladeira && st.cart.size ? '<button class="btn primary grande" data-a="tirar18">Remover itens 18+ e continuar</button>' : ''}
@@ -667,7 +667,7 @@ export function renderCheckout(root, { lojaId, modo }) {
     });
   }
 
-  // ---------- Geladeira com trava ----------
+  // ---------- Cervejeira (geladeira com trava, só 18+) ----------
   function telaGeladeira(escolhida = null) {
     const gs = D.geladeirasDaLoja(lojaId);
     const g = escolhida || (gs.length === 1 ? gs[0] : null);
@@ -676,8 +676,8 @@ export function renderCheckout(root, { lojaId, modo }) {
       corpo.innerHTML = `
         <section class="pay pay-centro">
           <button class="link voltar" data-a="voltar">‹ Voltar</button>
-          <h1>🧊 Qual geladeira?</h1>
-          <div class="pay-opcoes lista-gel">${gs.map((x) => `<button class="opcao" data-g="${x.id}"><span>🧊</span><b>${esc(x.nome)}</b><small>Somente maiores de 18 anos</small></button>`).join('')}</div>
+          <h1>🍺 Qual cervejeira?</h1>
+          <div class="pay-opcoes lista-gel">${gs.map((x) => `<button class="opcao" data-g="${x.id}"><span>🍺</span><b>${esc(x.nome)}</b><small>Somente maiores de 18 anos</small></button>`).join('')}</div>
         </section>`;
       $('[data-a=voltar]', corpo).onclick = telaCompra;
       $$('[data-g]', corpo).forEach((b) => (b.onclick = () => telaGeladeira(D.geladeira(b.dataset.g))));
@@ -685,7 +685,7 @@ export function renderCheckout(root, { lojaId, modo }) {
     }
     const executar = async (cli) => {
       st.etapa = 'abrindo';
-      corpo.innerHTML = `<section class="pay pay-centro"><div class="maquininha">🧊</div><h1>Conferindo sua idade…</h1><p class="aguarde"><span class="pontos"></span> Aguarde um instante</p></section>`;
+      corpo.innerHTML = `<section class="pay pay-centro"><div class="maquininha">🍺</div><h1>Conferindo sua idade…</h1><p class="aguarde"><span class="pontos"></span> Aguarde um instante</p></section>`;
       const r = await G.abrirGeladeira({ geladeiraId: g.id, clienteId: cli.id, canal: modo });
       if (st.etapa !== 'abrindo') return;
       if (!r.ok && r.falhaTecnica) {
@@ -698,7 +698,7 @@ export function renderCheckout(root, { lojaId, modo }) {
     };
     // No totem, cada abertura pede CPF/celular + PIN (outra pessoa pode estar usando a tela).
     telaIdentificar({
-      titulo: `🧊 ${esc(g.nome)}`,
+      titulo: `🍺 ${esc(g.nome)}`,
       texto: 'Exclusiva para maiores de 18 anos. Identifique-se para destravar a porta.',
       aoOk: executar,
     });
@@ -710,7 +710,7 @@ export function renderCheckout(root, { lojaId, modo }) {
     corpo.innerHTML = `
       <section class="pay pay-centro fim">
         <div class="ok-circulo">🔓</div>
-        <h1>Geladeira destravada!</h1>
+        <h1>Cervejeira destravada!</h1>
         <p class="grande-txt">${esc(cli.nome.split(' ')[0])}, puxe a porta agora. Ela trava de novo em <b data-seg>${segundos}</b> s.</p>
         <p>Pegue seus produtos, feche a porta e escaneie tudo aqui para pagar.</p>
         <button class="btn primary grande" data-a="comprar">📷 Escanear meus produtos</button>
