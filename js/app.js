@@ -5,6 +5,10 @@ import { renderCheckout } from './checkout.js';
 import { renderCliente } from './cliente.js';
 import { renderAdmin } from './admin.js';
 import * as N from './nfce.js';
+import { instalarSimulador } from './simulador-maquininha.js';
+
+// Preview: maquininha.html?simular=1 liga uma maquininha simulada (só no navegador, nunca no app real).
+if (/[?&]simular=1\b/.test(location.search)) instalarSimulador();
 
 D.carregar();
 const app = $('#app');

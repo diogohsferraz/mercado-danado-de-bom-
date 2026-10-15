@@ -11,6 +11,10 @@ O app **Danado de Bom** roda na Moderninha Smart / Smart 2 e transforma a maquin
 
 O app é só uma "casca": a lógica fica no site. Uma atualização do mercado (preços, telas, regras) não exige novo APK nem nova homologação.
 
+## Ver antes de instalar (preview)
+
+Abra `https://diogohsferraz.github.io/mercado-danado-de-bom-/preview-maquininha.html` em qualquer navegador. É o mesmo app, na medida da tela da Smart 2, com uma **maquininha simulada**: você aprova ou recusa o pagamento, testa o Pix e vê o comprovante como sairia na bobina. Nada é cobrado. No celular, use `maquininha.html?simular=1#/totem/loja1`.
+
 ## Como conseguir o APK
 
 O GitHub compila o app automaticamente a cada mudança na pasta `android/`:

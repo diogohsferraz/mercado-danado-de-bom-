@@ -79,7 +79,8 @@ export async function imprimirCupom({ venda, loja, cfg, estabelecimento }) {
   }
   add('-'.repeat(32));
   if (venda.desconto) col(`Desconto ${venda.cupom || ''}`, `-${brl(venda.desconto)}`).forEach((t) => add(t));
-  col('TOTAL', brl(venda.total)).forEach((t) => add(t, { negrito: true, grande: true }));
+  // Letra grande ocupa mais espaço: 22 colunas cabem na bobina de 58 mm.
+  col('TOTAL', brl(venda.total), 22).forEach((t) => add(t, { negrito: true, grande: true }));
   add(`${NOME_PAG[venda.pagamento] || venda.pagamento}${venda.tef?.bandeira ? ` ${venda.tef.bandeira}` : ''}`);
   if (venda.tef?.nsu) add(`NSU ${venda.tef.nsu}`);
   add('-'.repeat(32));

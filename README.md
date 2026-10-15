@@ -60,6 +60,7 @@ Dados de demonstração: 3 lojas + 1 depósito em Maceió/AL, 39 produtos, 45 di
   - o app Android ([`android/`](android/README.md)) abre o totem na própria máquina e cobra crédito, débito e Pix pela PlugPag;
   - imprime só o comprovante da compra e estorna o pagamento junto com a venda;
   - o GitHub Actions gera o APK a cada mudança.
+  - **Preview no navegador:** `preview-maquininha.html` mostra a tela da Smart 2 com uma maquininha simulada (aprovar/recusar, Pix e comprovante na tela).
 - **Notas de entrada:**
   - importa os XMLs das NF-e de compra (.xml ou .zip), ou baixa a nota **pela chave de acesso**: digitada ou lida do código de barras do DANFE, via ponte;
   - guarda todos os XMLs no aparelho;
